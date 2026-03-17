@@ -2,6 +2,20 @@
 
 A minimal Redis-like server built with Python and FastAPI.
 
+## Structure
+
+```text
+main.py
+common/
+strings/
+lists/
+sets/
+hashes/
+zsets/
+```
+
+Each data type lives in its own package, while `common/` contains shared store state, helpers, and common routes.
+
 ## Features
 
 - `set`: store a value in a global in-memory dictionary
