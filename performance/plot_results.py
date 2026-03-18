@@ -14,14 +14,13 @@ def create_plots(
     output_dir: Path,
     filename_prefix: str = "",
 ) -> list[Path]:
-    available = _available_backends(report)
-    if not available:
+    if not _has_plot_data(report):
         return []
 
     try:
-        return _create_matplotlib_plots(available, output_dir, filename_prefix)
+        return _create_matplotlib_plots(report, output_dir, filename_prefix)
     except ImportError:
-        return _create_svg_plots(available, output_dir, filename_prefix)
+        return _create_svg_plots(report, output_dir, filename_prefix)
 
 
 def create_plots_from_result_files(
@@ -40,8 +39,16 @@ def create_plots_from_result_files(
     return create_plots(report, target_dir, filename_prefix=filename_prefix)
 
 
-def _available_backends(report: dict[str, object]) -> dict[str, dict[str, object]]:
-    backends = report["backends"]
+def _has_plot_data(report: dict[str, object]) -> bool:
+    return (
+        "core_execute" in report and "error" not in report["core_execute"]
+    ) or bool(_available_network_backends(report))
+
+
+def _available_network_backends(report: dict[str, object]) -> dict[str, dict[str, object]]:
+    if "network_e2e" not in report:
+        return {}
+    backends = report["network_e2e"]["backends"]
     return {
         backend_name: backend_result
         for backend_name, backend_result in backends.items()
@@ -75,14 +82,20 @@ def _build_report_from_result_files(
             }
         )
 
+    latency_ms = {
+        operation.lower(): summary
+        for operation, summary in latency_report["latency_ms"].items()
+    }
     return {
-        "backends": {
-            backend_name: {
-                "latency": {
-                    operation.lower(): summary
-                    for operation, summary in latency_report["latency_ms"].items()
-                },
-                "load": normalized_load,
+        "network_e2e": {
+            "backends": {
+                backend_name: {
+                    "label": backend_name,
+                    "ping_baseline_ms": latency_ms.get("ping", {}).get("avg_ms", 0.0),
+                    "latency_ms": latency_ms,
+                    "avg_ms_over_ping": _avg_ms_over_ping_from_latency(latency_ms),
+                    "load": normalized_load,
+                }
             }
         }
     }
@@ -110,206 +123,259 @@ def _infer_filename_prefix(latency_json_path: Path, load_json_path: Path) -> str
     return ""
 
 
-def _latency_over_ping(backend_result: dict[str, object]) -> dict[str, dict[str, float | int]]:
-    if "latency_over_ping" in backend_result:
-        return backend_result["latency_over_ping"]
-
-    latency_result = backend_result["latency"]
-    ping_summary = latency_result["ping"]
-    adjusted: dict[str, dict[str, float | int]] = {}
-    for operation, summary in latency_result.items():
-        adjusted[operation] = {
-            "count": summary["count"],
-            "avg_ms": round(max(float(summary["avg_ms"]) - float(ping_summary["avg_ms"]), 0.0), 6),
-            "p50_ms": round(max(float(summary["p50_ms"]) - float(ping_summary["p50_ms"]), 0.0), 6),
-            "p95_ms": round(max(float(summary["p95_ms"]) - float(ping_summary["p95_ms"]), 0.0), 6),
-            "p99_ms": round(max(float(summary["p99_ms"]) - float(ping_summary["p99_ms"]), 0.0), 6),
-            "min_ms": round(max(float(summary["min_ms"]) - float(ping_summary["min_ms"]), 0.0), 6),
-            "max_ms": round(max(float(summary["max_ms"]) - float(ping_summary["max_ms"]), 0.0), 6),
-        }
-    return adjusted
-
-
-def _build_adjusted_available(
-    available: dict[str, dict[str, object]],
-) -> dict[str, dict[str, object]]:
+def _avg_ms_over_ping_from_latency(latency_result: dict[str, dict[str, float | int]]) -> dict[str, float]:
+    ping_avg = float(latency_result.get("ping", {}).get("avg_ms", 0.0))
     return {
-        backend_name: {
-            **backend_result,
-            "latency": _latency_over_ping(backend_result),
-        }
-        for backend_name, backend_result in available.items()
+        operation: round(max(float(summary["avg_ms"]) - ping_avg, 0.0), 6)
+        for operation, summary in latency_result.items()
     }
 
 
-def _create_matplotlib_plots(
+def _network_avg_over_ping(backend_result: dict[str, object]) -> dict[str, float]:
+    if "avg_ms_over_ping" in backend_result:
+        return {
+            operation: float(value)
+            for operation, value in backend_result["avg_ms_over_ping"].items()
+        }
+    return _avg_ms_over_ping_from_latency(backend_result["latency_ms"])
+
+
+def _ordered_operations_from_latency(
     available: dict[str, dict[str, object]],
-    output_dir: Path,
-    filename_prefix: str,
-) -> list[Path]:
-    import matplotlib.pyplot as plt
-
-    latency_path = output_dir / f"{filename_prefix}latency_summary.png"
-    adjusted_latency_path = output_dir / f"{filename_prefix}latency_over_ping.png"
-    load_path = output_dir / f"{filename_prefix}load_summary.png"
-    backend_names = list(available.keys())
-    operations = _ordered_operations(available)
-    x_positions = list(range(len(operations)))
-    width = 0.8 / max(len(backend_names), 1)
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    for index, backend_name in enumerate(backend_names):
-        latency_result = available[backend_name]["latency"]
-        bar_positions = [
-            position - 0.4 + (width / 2) + (index * width) for position in x_positions
-        ]
-        average_values = [latency_result[operation]["avg_ms"] for operation in operations]
-        p95_values = [latency_result[operation]["p95_ms"] for operation in operations]
-        axes[0].bar(
-            bar_positions,
-            average_values,
-            width=width,
-            color=COLORS[index % len(COLORS)],
-            label=_backend_label(backend_name, available[backend_name]),
-        )
-        axes[1].bar(
-            bar_positions,
-            p95_values,
-            width=width,
-            color=COLORS[index % len(COLORS)],
-            label=_backend_label(backend_name, available[backend_name]),
-        )
-
-    for axis, title in zip(axes, ["Average Latency (ms)", "P95 Latency (ms)"]):
-        axis.set_xticks(x_positions)
-        axis.set_xticklabels([operation.upper() for operation in operations])
-        axis.set_title(title)
-        axis.set_ylabel("milliseconds")
-        axis.legend()
-
-    fig.tight_layout()
-    fig.savefig(latency_path, dpi=150)
-    plt.close(fig)
-
-    adjusted_available = _build_adjusted_available(available)
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    for index, backend_name in enumerate(backend_names):
-        latency_result = adjusted_available[backend_name]["latency"]
-        bar_positions = [
-            position - 0.4 + (width / 2) + (index * width) for position in x_positions
-        ]
-        average_values = [latency_result[operation]["avg_ms"] for operation in operations]
-        p95_values = [latency_result[operation]["p95_ms"] for operation in operations]
-        axes[0].bar(
-            bar_positions,
-            average_values,
-            width=width,
-            color=COLORS[index % len(COLORS)],
-            label=_backend_label(backend_name, adjusted_available[backend_name]),
-        )
-        axes[1].bar(
-            bar_positions,
-            p95_values,
-            width=width,
-            color=COLORS[index % len(COLORS)],
-            label=_backend_label(backend_name, adjusted_available[backend_name]),
-        )
-
-    for axis, title in zip(
-        axes,
-        ["Average Latency Over PING (ms)", "P95 Latency Over PING (ms)"],
-    ):
-        axis.set_xticks(x_positions)
-        axis.set_xticklabels([operation.upper() for operation in operations])
-        axis.set_title(title)
-        axis.set_ylabel("milliseconds")
-        axis.legend()
-
-    fig.tight_layout()
-    fig.savefig(adjusted_latency_path, dpi=150)
-    plt.close(fig)
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    for index, backend_name in enumerate(backend_names):
-        load_result = available[backend_name]["load"]
-        concurrency_levels = [row["concurrency"] for row in load_result]
-        throughput_values = [row["throughput_rps"] for row in load_result]
-        p95_values = [row["p95_latency_ms"] for row in load_result]
-
-        axes[0].plot(
-            concurrency_levels,
-            throughput_values,
-            marker="o",
-            color=COLORS[index % len(COLORS)],
-            label=_backend_label(backend_name, available[backend_name]),
-        )
-        axes[1].plot(
-            concurrency_levels,
-            p95_values,
-            marker="o",
-            color=COLORS[index % len(COLORS)],
-            label=_backend_label(backend_name, available[backend_name]),
-        )
-
-    axes[0].set_title("Throughput Under Load")
-    axes[0].set_xlabel("concurrency")
-    axes[0].set_ylabel("requests/sec")
-    axes[0].legend()
-
-    axes[1].set_title("P95 Latency Under Load")
-    axes[1].set_xlabel("concurrency")
-    axes[1].set_ylabel("milliseconds")
-    axes[1].legend()
-
-    fig.tight_layout()
-    fig.savefig(load_path, dpi=150)
-    plt.close(fig)
-
-    return [latency_path, adjusted_latency_path, load_path]
-
-
-def _ordered_operations(available: dict[str, dict[str, object]]) -> list[str]:
+) -> list[str]:
     operations: list[str] = []
     for backend_result in available.values():
-        for operation in backend_result["latency"].keys():
+        for operation in backend_result["latency_ms"].keys():
             if operation not in operations:
                 operations.append(operation)
     return operations
 
 
-def _create_svg_plots(
-    available: dict[str, dict[str, object]],
+def _ordered_operations_from_core(core_execute: dict[str, object]) -> list[str]:
+    return list(core_execute["latency_us"].keys())
+
+
+def _create_matplotlib_plots(
+    report: dict[str, object],
     output_dir: Path,
     filename_prefix: str,
 ) -> list[Path]:
-    latency_path = output_dir / f"{filename_prefix}latency_summary.svg"
-    adjusted_latency_path = output_dir / f"{filename_prefix}latency_over_ping.svg"
-    load_path = output_dir / f"{filename_prefix}load_summary.svg"
-    latency_path.write_text(_render_latency_svg(available), encoding="utf-8")
-    adjusted_latency_path.write_text(
-        _render_latency_svg(_build_adjusted_available(available), title="Latency Over PING"),
-        encoding="utf-8",
+    import matplotlib.pyplot as plt
+
+    paths: list[Path] = []
+
+    if "core_execute" in report and "error" not in report["core_execute"]:
+        core_execute = report["core_execute"]
+        operations = _ordered_operations_from_core(core_execute)
+        summary = core_execute["latency_us"]
+        core_path = output_dir / f"{filename_prefix}core_execute_summary.png"
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+        avg_values = [summary[operation]["avg_us"] for operation in operations]
+        p95_values = [summary[operation]["p95_us"] for operation in operations]
+        x_positions = list(range(len(operations)))
+
+        axes[0].bar(x_positions, avg_values, color=COLORS[0])
+        axes[1].bar(x_positions, p95_values, color=COLORS[1])
+
+        for axis, title in zip(axes, ["Average Latency (us)", "P95 Latency (us)"]):
+            axis.set_xticks(x_positions)
+            axis.set_xticklabels([operation.upper() for operation in operations])
+            axis.set_title(title)
+            axis.set_ylabel("microseconds")
+
+        fig.suptitle("Core Execute Summary")
+        fig.tight_layout()
+        fig.savefig(core_path, dpi=150)
+        plt.close(fig)
+        paths.append(core_path)
+
+    available = _available_network_backends(report)
+    if available:
+        backend_names = list(available.keys())
+        operations = _ordered_operations_from_latency(available)
+        x_positions = list(range(len(operations)))
+        width = 0.8 / max(len(backend_names), 1)
+
+        latency_path = output_dir / f"{filename_prefix}network_e2e_latency_summary.png"
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+        for index, backend_name in enumerate(backend_names):
+            latency_result = available[backend_name]["latency_ms"]
+            bar_positions = [
+                position - 0.4 + (width / 2) + (index * width) for position in x_positions
+            ]
+            avg_values = [latency_result[operation]["avg_ms"] for operation in operations]
+            p95_values = [latency_result[operation]["p95_ms"] for operation in operations]
+            axes[0].bar(
+                bar_positions,
+                avg_values,
+                width=width,
+                color=COLORS[index % len(COLORS)],
+                label=_backend_label(backend_name, available[backend_name]),
+            )
+            axes[1].bar(
+                bar_positions,
+                p95_values,
+                width=width,
+                color=COLORS[index % len(COLORS)],
+                label=_backend_label(backend_name, available[backend_name]),
+            )
+
+        for axis, title in zip(axes, ["Average Latency (ms)", "P95 Latency (ms)"]):
+            axis.set_xticks(x_positions)
+            axis.set_xticklabels([operation.upper() for operation in operations])
+            axis.set_title(title)
+            axis.set_ylabel("milliseconds")
+            axis.legend()
+
+        fig.suptitle("Network E2E Latency Summary")
+        fig.tight_layout()
+        fig.savefig(latency_path, dpi=150)
+        plt.close(fig)
+        paths.append(latency_path)
+
+        avg_over_ping_path = output_dir / f"{filename_prefix}network_e2e_avg_over_ping.png"
+        fig, axis = plt.subplots(1, 1, figsize=(8, 4))
+        for index, backend_name in enumerate(backend_names):
+            avg_over_ping = _network_avg_over_ping(available[backend_name])
+            bar_positions = [
+                position - 0.4 + (width / 2) + (index * width) for position in x_positions
+            ]
+            values = [avg_over_ping[operation] for operation in operations]
+            axis.bar(
+                bar_positions,
+                values,
+                width=width,
+                color=COLORS[index % len(COLORS)],
+                label=_backend_label(backend_name, available[backend_name]),
+            )
+        axis.set_xticks(x_positions)
+        axis.set_xticklabels([operation.upper() for operation in operations])
+        axis.set_ylabel("milliseconds")
+        axis.set_title("Average Over PING (ms)")
+        axis.legend()
+        fig.suptitle("Network E2E Average Over PING")
+        fig.tight_layout()
+        fig.savefig(avg_over_ping_path, dpi=150)
+        plt.close(fig)
+        paths.append(avg_over_ping_path)
+
+        load_path = output_dir / f"{filename_prefix}network_e2e_load_summary.png"
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+        for index, backend_name in enumerate(backend_names):
+            load_result = available[backend_name]["load"]
+            concurrency_levels = [row["concurrency"] for row in load_result]
+            throughput_values = [row["throughput_rps"] for row in load_result]
+            p95_values = [row["p95_latency_ms"] for row in load_result]
+
+            axes[0].plot(
+                concurrency_levels,
+                throughput_values,
+                marker="o",
+                color=COLORS[index % len(COLORS)],
+                label=_backend_label(backend_name, available[backend_name]),
+            )
+            axes[1].plot(
+                concurrency_levels,
+                p95_values,
+                marker="o",
+                color=COLORS[index % len(COLORS)],
+                label=_backend_label(backend_name, available[backend_name]),
+            )
+
+        axes[0].set_title("Throughput Under Load")
+        axes[0].set_xlabel("concurrency")
+        axes[0].set_ylabel("requests/sec")
+        axes[0].legend()
+
+        axes[1].set_title("P95 Latency Under Load")
+        axes[1].set_xlabel("concurrency")
+        axes[1].set_ylabel("milliseconds")
+        axes[1].legend()
+
+        fig.suptitle("Network E2E Load Summary")
+        fig.tight_layout()
+        fig.savefig(load_path, dpi=150)
+        plt.close(fig)
+        paths.append(load_path)
+
+    return paths
+
+
+def _create_svg_plots(
+    report: dict[str, object],
+    output_dir: Path,
+    filename_prefix: str,
+) -> list[Path]:
+    paths: list[Path] = []
+
+    if "core_execute" in report and "error" not in report["core_execute"]:
+        core_path = output_dir / f"{filename_prefix}core_execute_summary.svg"
+        core_path.write_text(_render_core_execute_svg(report["core_execute"]), encoding="utf-8")
+        paths.append(core_path)
+
+    available = _available_network_backends(report)
+    if available:
+        latency_path = output_dir / f"{filename_prefix}network_e2e_latency_summary.svg"
+        avg_over_ping_path = output_dir / f"{filename_prefix}network_e2e_avg_over_ping.svg"
+        load_path = output_dir / f"{filename_prefix}network_e2e_load_summary.svg"
+        latency_path.write_text(
+            _render_network_latency_svg(available),
+            encoding="utf-8",
+        )
+        avg_over_ping_path.write_text(
+            _render_network_avg_over_ping_svg(available),
+            encoding="utf-8",
+        )
+        load_path.write_text(_render_load_svg(available), encoding="utf-8")
+        paths.extend([latency_path, avg_over_ping_path, load_path])
+
+    return paths
+
+
+def _render_core_execute_svg(core_execute: dict[str, object]) -> str:
+    operations = _ordered_operations_from_core(core_execute)
+    summary = core_execute["latency_us"]
+    avg_series = [("redis.execute", [summary[operation]["avg_us"] for operation in operations])]
+    p95_series = [("redis.execute", [summary[operation]["p95_us"] for operation in operations])]
+    max_value = max(
+        [value for _, values in avg_series + p95_series for value in values],
+        default=1.0,
     )
-    load_path.write_text(_render_load_svg(available), encoding="utf-8")
-    return [latency_path, adjusted_latency_path, load_path]
+    scale_max = max_value * 1.15 if max_value else 1.0
+    return _render_two_panel_svg(
+        title="Core Execute Summary",
+        legend_labels=["redis.execute"],
+        left_panel=_render_bar_panel(
+            title="Average Latency (us)",
+            y_label="microseconds",
+            categories=[operation.upper() for operation in operations],
+            series=avg_series,
+            scale_max=scale_max,
+        ),
+        right_panel=_render_bar_panel(
+            title="P95 Latency (us)",
+            y_label="microseconds",
+            categories=[operation.upper() for operation in operations],
+            series=p95_series,
+            scale_max=scale_max,
+        ),
+    )
 
 
-def _render_latency_svg(
-    available: dict[str, dict[str, object]],
-    title: str = "Latency Summary",
-) -> str:
-    operations = _ordered_operations(available)
+def _render_network_latency_svg(available: dict[str, dict[str, object]]) -> str:
+    operations = _ordered_operations_from_latency(available)
     avg_series = [
         (
             backend_name,
-            [available[backend_name]["latency"][operation]["avg_ms"] for operation in operations],
+            [available[backend_name]["latency_ms"][operation]["avg_ms"] for operation in operations],
         )
         for backend_name in available
     ]
     p95_series = [
         (
             backend_name,
-            [available[backend_name]["latency"][operation]["p95_ms"] for operation in operations],
+            [available[backend_name]["latency_ms"][operation]["p95_ms"] for operation in operations],
         )
         for backend_name in available
     ]
@@ -320,20 +386,47 @@ def _render_latency_svg(
     )
     scale_max = max_value * 1.15 if max_value else 1.0
     return _render_two_panel_svg(
-        title=title,
+        title="Network E2E Latency Summary",
         legend_labels=[_backend_label(name, result) for name, result in available.items()],
         left_panel=_render_bar_panel(
-            title="Average Latency (ms)" if title == "Latency Summary" else "Average Over PING (ms)",
+            title="Average Latency (ms)",
             y_label="milliseconds",
             categories=[operation.upper() for operation in operations],
             series=avg_series,
             scale_max=scale_max,
         ),
         right_panel=_render_bar_panel(
-            title="P95 Latency (ms)" if title == "Latency Summary" else "P95 Over PING (ms)",
+            title="P95 Latency (ms)",
             y_label="milliseconds",
             categories=[operation.upper() for operation in operations],
             series=p95_series,
+            scale_max=scale_max,
+        ),
+    )
+
+
+def _render_network_avg_over_ping_svg(available: dict[str, dict[str, object]]) -> str:
+    operations = _ordered_operations_from_latency(available)
+    avg_series = [
+        (
+            backend_name,
+            [_network_avg_over_ping(available[backend_name])[operation] for operation in operations],
+        )
+        for backend_name in available
+    ]
+    max_value = max(
+        [value for _, values in avg_series for value in values],
+        default=1.0,
+    )
+    scale_max = max_value * 1.15 if max_value else 1.0
+    return _render_single_panel_svg(
+        title="Network E2E Average Over PING",
+        legend_labels=[_backend_label(name, result) for name, result in available.items()],
+        panel=_render_bar_panel(
+            title="Average Over PING (ms)",
+            y_label="milliseconds",
+            categories=[operation.upper() for operation in operations],
+            series=avg_series,
             scale_max=scale_max,
         ),
     )
@@ -361,7 +454,7 @@ def _render_load_svg(available: dict[str, dict[str, object]]) -> str:
     throughput_max = max(all_throughput_values, default=1.0) * 1.15
     latency_max = max(all_latency_values, default=1.0) * 1.15
     return _render_two_panel_svg(
-        title="Load Summary",
+        title="Network E2E Load Summary",
         legend_labels=[_backend_label(name, result) for name, result in available.items()],
         left_panel=_render_line_panel(
             title="Throughput Under Load",
@@ -406,6 +499,37 @@ def _render_two_panel_svg(
             *legend_items,
             f'<g transform="translate(30, 58)">{left_panel}</g>',
             f'<g transform="translate(610, 58)">{right_panel}</g>',
+            "</svg>",
+        ]
+    )
+
+
+def _render_single_panel_svg(
+    title: str,
+    legend_labels: list[str],
+    panel: str,
+) -> str:
+    width = 620
+    height = 420
+    legend_items = []
+    legend_x = 320
+    for index, label in enumerate(legend_labels):
+        x = legend_x + (index * 120)
+        color = COLORS[index % len(COLORS)]
+        legend_items.append(
+            f'<rect x="{x}" y="22" width="14" height="14" fill="{color}" rx="2" />'
+        )
+        legend_items.append(
+            f'<text x="{x + 20}" y="34" font-size="12" fill="#34495e">{escape(label)}</text>'
+        )
+
+    return "\n".join(
+        [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+            '<rect width="100%" height="100%" fill="#f7f9fc" />',
+            f'<text x="40" y="36" font-size="24" font-weight="700" fill="#1f2937">{escape(title)}</text>',
+            *legend_items,
+            f'<g transform="translate(30, 58)">{panel}</g>',
             "</svg>",
         ]
     )
@@ -484,9 +608,7 @@ def _render_line_panel(
 
     shapes.extend(_render_y_axis(plot_left, plot_top, plot_height, plot_width, scale_max))
 
-    x_values = sorted(
-        {point[0] for _, points in series for point in points}
-    )
+    x_values = sorted({point[0] for _, points in series for point in points})
     if len(x_values) == 1:
         x_positions = {x_values[0]: plot_left + (plot_width / 2)}
     else:
