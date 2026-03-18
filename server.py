@@ -1,7 +1,9 @@
 import socket
 from collections.abc import Callable
+from threading import Thread
 
-from protocol_adapter import handle_raw_command
+from protocol_parser import ProtocolParseError, read_command
+from protocol_response import ProtocolResponseError, encode_response
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -17,29 +19,31 @@ def handle_client_connection(client_socket: socket.socket, execute: Callable[[li
     각 요청은 반드시 줄바꿈 단위로 구분된다고 가정한다.
     """
 
-    # socket.makefile()을 쓰면 바이트 스트림을 "한 줄씩 읽는 파일"처럼 다룰 수 있다.
-    # 지금 단계에서는 요청 1개가 1줄이라는 규칙이 있으므로 이 방식이 가장 단순하다.
-    reader = client_socket.makefile("r", encoding="utf-8", newline="\n")
+    # RESP는 길이 기반 프레임을 포함하므로 바이너리 모드로 읽는다.
+    reader = client_socket.makefile("rb")
 
     try:
         while True:
-            raw_line = reader.readline()
+            try:
+                command = read_command(reader)
+            except ProtocolParseError as exc:
+                client_socket.sendall(
+                    encode_response({"type": "error", "value": str(exc)}).encode("utf-8")
+                )
+                continue
 
-            # readline()이 빈 문자열을 돌려주면 상대가 연결을 끊은 것이다.
-            if raw_line == "":
+            if command is None:
                 break
 
-            # protocol_adapter는
-            # 1) raw 문자열 파싱
-            # 2) execute 호출
-            # 3) 응답 직렬화
-            # 를 한 번에 이어주는 얇은 연결 계층이다.
-            response = handle_raw_command(raw_line, execute)
+            result = execute(command)
 
-            # 문자열 응답을 바이트로 바꿔 실제 소켓으로 보낸다.
+            try:
+                response = encode_response(result)
+            except ProtocolResponseError as exc:
+                response = encode_response({"type": "error", "value": str(exc)})
+
             client_socket.sendall(response.encode("utf-8"))
     finally:
-        # 예외가 나더라도 연결은 정리해 주는 편이 안전하다.
         reader.close()
         client_socket.close()
 
@@ -69,7 +73,12 @@ def run_server(
         while True:
             client_socket, client_address = server_socket.accept()
             print(f"client connected: {client_address}")
-            handle_client_connection(client_socket, execute)
+            thread = Thread(
+                target=handle_client_connection,
+                args=(client_socket, execute),
+                daemon=True,
+            )
+            thread.start()
     finally:
         server_socket.close()
 
@@ -95,4 +104,3 @@ def _load_execute() -> Callable[[list[str]], dict]:
 if __name__ == "__main__":
     # 직접 실행할 때는 redis.py의 execute를 불러와 서버를 시작한다.
     run_server(_load_execute())
-

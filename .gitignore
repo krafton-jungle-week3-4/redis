@@ -3,3 +3,4 @@
 .codex-backup/
 __pycache__/
 *.pyc
+performance/results/
