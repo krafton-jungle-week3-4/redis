@@ -1,20 +1,16 @@
-import json
+﻿import json
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 
-from redis import execute, expiry_store, hash_store, list_store, set_store, string_store, zset_store
+from core_state import clear_all_stores
+from redis import execute
 
 
 class SnapshotCoreTests(unittest.TestCase):
     def setUp(self) -> None:
-        string_store.clear()
-        set_store.clear()
-        list_store.clear()
-        hash_store.clear()
-        zset_store.clear()
-        expiry_store.clear()
+        clear_all_stores()
 
     def test_snapshot_dump_writes_file(self) -> None:
         execute(["SET", "name", "redis"])
@@ -42,6 +38,18 @@ class SnapshotCoreTests(unittest.TestCase):
             payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
             # Snapshot should preserve value at the dump point.
             self.assertEqual(payload["strings"]["counter"], "1")
+
+    def test_snapshot_includes_closed_season_state(self) -> None:
+        execute(["ZADD", "leaderboard", "10", "alice"])
+        execute(["CLOSESEASON", "leaderboard"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            snapshot_path = Path(tmpdir) / "season.json"
+            execute(["SNAPSHOT", str(snapshot_path)])
+
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["archived_zsets"]["leaderboard"], {"alice": 10.0})
+            self.assertEqual(payload["closed_zsets"], ["leaderboard"])
 
     def test_snapshot_during_writes_produces_valid_dump(self) -> None:
         stop = False
