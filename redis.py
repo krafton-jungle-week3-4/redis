@@ -8,6 +8,11 @@
 
 from typing import Literal, TypedDict
 
+from error_contract import (
+    ERR_EMPTY_COMMAND,
+    err_unknown_command,
+    err_wrong_number_of_arguments,
+)
 
 # 응답 dict의 type 필드는 아래 5가지만 허용한다.
 # (AGENTS.md의 Allowed Response Types를 그대로 반영)
@@ -29,6 +34,10 @@ def _error(message: str) -> RedisResponse:
     return {"type": "error", "value": message}
 
 
+def _wrong_arity(command_name: str) -> RedisResponse:
+    return _error(err_wrong_number_of_arguments(command_name))
+
+
 def execute(command: list[str]) -> RedisResponse:
     """코어 진입점.
 
@@ -39,7 +48,7 @@ def execute(command: list[str]) -> RedisResponse:
     """
     # 빈 명령은 예외를 던지지 않고, 합의된 error 응답으로 반환한다.
     if not command:
-        return _error("empty command")
+        return _error(ERR_EMPTY_COMMAND)
 
     # 명령어 대소문자 차이를 없애기 위해 단일 규칙(upper)만 사용한다.
     command_name = command[0].upper()
@@ -57,7 +66,7 @@ def execute(command: list[str]) -> RedisResponse:
     }
 
     if command_name in expected_arity and len(command) != expected_arity[command_name]:
-        return _error("wrong number of arguments")
+        return _wrong_arity(command_name)
 
     # 이제부터는 계약된 최소 명령만 처리한다.
     if command_name == "PING":
@@ -95,4 +104,4 @@ def execute(command: list[str]) -> RedisResponse:
         return {"type": "bulk_string", "value": "none"}
 
     # 지원하지 않는 명령도 예외 대신 표준 error dict로 응답한다.
-    return _error("unknown command")
+    return _error(err_unknown_command(command[0]))

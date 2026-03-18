@@ -1,3 +1,6 @@
+from error_contract import ERR_EMPTY_COMMAND
+
+
 class ProtocolParseError(ValueError):
     """프로토콜 입력을 명령 토큰으로 바꿀 수 없을 때 사용하는 예외."""
 
@@ -23,7 +26,7 @@ def parse_command_line(raw: str) -> list[str]:
     # 아무 내용도 남지 않으면 유효한 명령이 아니므로
     # 상위 서버 레이어가 에러 응답을 만들 수 있게 예외를 올린다.
     if not stripped:
-        raise ProtocolParseError("empty command")
+        raise ProtocolParseError(ERR_EMPTY_COMMAND)
 
     # 최소 구현에서는 공백 기반 토큰화만 지원한다.
     # split()을 인자 없이 쓰면 공백 여러 개를 자연스럽게 하나처럼 처리해 준다.

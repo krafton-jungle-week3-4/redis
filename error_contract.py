@@ -1,0 +1,12 @@
+"""Shared error message contract for parser/server/core layers."""
+
+
+ERR_EMPTY_COMMAND = "ERR empty command"
+
+
+def err_wrong_number_of_arguments(command_name: str) -> str:
+    return f"ERR wrong number of arguments for '{command_name.lower()}' command"
+
+
+def err_unknown_command(raw_command_name: str) -> str:
+    return f"ERR unknown command '{raw_command_name}'"
