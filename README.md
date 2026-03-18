@@ -13,11 +13,33 @@ Mini Redis는 Python으로 구현한 in-memory key-value 저장소입니다.
 
 - 여러 요청이 동시에 들어와도 데이터가 꼬이지 않게 할 수 있는가
 - 만료된 데이터를 어떻게 처리할 것인가
+- 외부에서 쉽게 사용할 수 있는 구조를 만들 수 있는가
 - 삭제/버전 전환 이후 오래된 조회 결과를 어떻게 무효화할 것인가
 - 서버가 내려가도 데이터를 어떻게 복구할 것인가
-- 메모리 저장소가 왜 빠른지 어떻게 보여줄 것인가
 
-## 3. 기술 스택
+## 3. 데모 흐름
+
+발표에서는 아래 6개 흐름을 한 파일에서 시연할 예정입니다.
+
+- 데모 파일: `[demo_test_cases.py](D:\03Dev\05Jungle\Week3\mini-redis\demo_test_cases.py)`
+- 실행: `python demo_test_cases.py`
+
+시연 순서는 다음과 같습니다.
+
+1. **동시성 제어**
+   - `test_01_single_writer_queue_keeps_zincrby_consistent`
+2. **TTL 만료 처리**
+   - `test_02_expired_value_behaves_like_missing_key`
+3. **외부 사용 구조**
+   - `test_03_malformed_resp_returns_error_and_keeps_processing`
+4. **데이터 무효화**
+   - `test_04_delete_invalidates_cached_get_result`
+5. **장애 후 복구**
+   - `test_05_aof_replay_recovers_data_after_cleared_state`
+6. **추가 데모: Snapshot 복구 중 요청 처리**
+   - `test_06_write_requests_wait_until_restore_completes`
+
+## 4. 기술 스택
 
 - Python
 - RESP 스타일 TCP 서버
@@ -25,7 +47,7 @@ Mini Redis는 Python으로 구현한 in-memory key-value 저장소입니다.
 - MongoDB 비교 벤치마크
 - unittest
 
-## 4. 전체 구조
+## 5. 전체 구조
 
 ```text
 server.py            # RESP/TCP 서버 엔트리포인트
@@ -37,7 +59,7 @@ performance/         # 성능 비교
 tests/               # 테스트
 ```
 
-## 5. 구현한 기능
+## 6. 구현한 기능
 
 ### String
 - `SET`, `GET`, `DEL`
@@ -67,40 +89,34 @@ tests/               # 테스트
 - `ZRANGE`, `ZREVRANGE`
 - `ZINCRBY`, `ZREM`, `ZCARD`
 
-## 6. 핵심 설계 포인트
+## 7. 핵심 설계 포인트
 
-### 6-1. 동시성 문제 해결
+### 7-1. 동시성 문제 해결
 
 여러 요청이 동시에 같은 key를 수정할 때 값을 안전하게 지키기 위해 **Single Writer + Queue** 구조를 적용했습니다.
 
 - 모든 쓰기 명령은 queue에 넣고
 - writer thread 하나가 순서대로 처리합니다.
 
-즉, 요청은 동시에 들어와도 실제 메모리 반영은 순차적으로 일어나도록 설계했습니다.
-
-### 6-2. TTL 처리
+### 7-2. TTL 처리
 
 만료된 값은 두 방식으로 처리합니다.
 
 - **Lazy Expiration**: 조회 시 만료 여부 확인 후 삭제
 - **Background Cleanup**: 주기적으로 만료 key 정리
 
-### 6-3. 데이터 무효화
+### 7-3. 데이터 무효화
 
 삭제, 타입 변경, 버전 전환 이후 오래된 결과가 남지 않도록 `managers/invalidation_manager.py`를 통해 캐시 무효화를 처리했습니다.
 
-### 6-4. 복구와 내구성
+### 7-4. 복구와 내구성
 
-메모리 기반 구조의 한계를 보완하기 위해 두 가지를 구현했습니다.
+메모리 기반 구조의 한계를 보완하기 위해 아래를 구현했습니다.
 
 - **Snapshot / Restore**
 - **AOF(Append Only File) 기반 복구**
 
 복구 중에는 새 요청을 잠시 대기시켜 데이터가 섞이지 않도록 했습니다.
-
-## 7. 외부 사용 방식
-
-이 프로젝트는 RESP 스타일 TCP 서버를 통해 Redis와 비슷한 명령 흐름을 확인할 수 있습니다.
 
 ## 8. 테스트와 검증
 
@@ -114,8 +130,6 @@ tests/               # 테스트
 - invalidation / version 테스트
 - 프로토콜 테스트
 
-즉, 기능뿐 아니라 엣지 케이스와 운영 시나리오도 확인하려고 했습니다.
-
 ## 9. 성능 비교
 
 `performance/` 폴더에서 mini-redis와 MongoDB를 비교하는 벤치마크를 구성했습니다.
@@ -128,23 +142,13 @@ tests/               # 테스트
 
 ## 9-1. 성능 그래프 시각자료
 
-## 10. 데모 흐름
-
-발표에서는 아래 순서로 보여줄 예정입니다.
-
-1. String 저장 / 조회 / 삭제
-2. Sorted Set 점수 증가와 랭킹 확인
-3. TTL 설정과 만료 확인
-4. Snapshot 또는 AOF 복구
-5. 테스트 코드와 성능 비교 구조 소개
-
-## 11. 프로젝트를 통해 배운 점
+## 10. 프로젝트를 통해 배운 점
 
 이번 프로젝트를 통해 단순 자료구조 구현보다 더 중요한 것이 **동시성, 만료, 무효화, 복구 같은 운영 관점의 설계**라는 점을 배웠습니다.
 
 또한 AI를 활용해 구현 속도를 높일 수 있어도, 핵심 로직은 반드시 사람이 이해하고 검증해야 한다는 점을 다시 확인했습니다.
 
-## 12. 실행 방법
+## 11. 실행 방법
 
 ### RESP 서버
 
@@ -156,6 +160,12 @@ python server.py
 
 ```bash
 python -m unittest discover -s tests
+```
+
+### 데모 테스트 실행
+
+```bash
+python demo_test_cases.py
 ```
 
 ### 성능 비교 실행
