@@ -1,175 +1,184 @@
-﻿# mini-redis
+﻿# Mini Redis
 
-A minimal Redis-like server built with Python and FastAPI.
+하루 안에 Redis의 핵심 개념을 직접 구현하고, AI로 만든 코드를 팀이 이해하고 설명할 수 있는 수준까지 소화하는 것을 목표로 한 프로젝트입니다.
 
-## Structure
+## 1. 프로젝트 소개
+
+Mini Redis는 Python으로 구현한 in-memory key-value 저장소입니다.  
+단순 저장/조회만이 아니라, **자료형 명령 처리, 동시성 제어, TTL, 복구, 무효화, 성능 비교**까지 포함한 작은 Redis 시스템을 만드는 데 집중했습니다.
+
+## 2. 우리가 해결하려 한 문제
+
+이번 과제에서 저희가 중요하게 본 질문은 아래와 같습니다.
+
+- 여러 요청이 동시에 들어와도 데이터가 꼬이지 않게 할 수 있는가
+- 만료된 데이터를 어떻게 처리할 것인가
+- 삭제/버전 전환 이후 오래된 조회 결과를 어떻게 무효화할 것인가
+- 서버가 내려가도 데이터를 어떻게 복구할 것인가
+- 메모리 저장소가 왜 빠른지 어떻게 보여줄 것인가
+
+## 3. 기술 스택
+
+- Python
+- FastAPI
+- RESP 스타일 TCP 서버
+- In-memory hash-table 기반 저장 구조
+- MongoDB 비교 벤치마크
+- unittest
+
+## 4. 전체 구조
 
 ```text
-main.py
-redis.py
-core_commands/
-common/
-performance/
+main.py              # FastAPI 진입점
+server.py            # RESP/TCP 서버
+redis.py             # 명령 실행 진입점 + 동시성 제어
+command_router.py    # 명령 분기
+core_commands/       # 자료형별 명령 구현
+core_state.py        # 실제 저장소
+snapshot_manager.py  # snapshot 저장
+restore_manager.py   # restore
+season_manager.py    # 시즌 종료
+version_manager.py   # 버전 전환
+aof_manager.py       # AOF 복구
+ttl_manager.py       # TTL 처리
+invalidation_manager.py # 무효화
+performance/         # 성능 비교
+tests/               # 테스트
 ```
 
-- `main.py` contains the REST-style API server.
-- `redis.py` contains the RESP-style in-memory command core.
-- `core_commands/` contains command handlers split by data type.
-- `common/` contains shared helpers used by the REST server.
-- `performance/` contains the mini-redis vs MongoDB benchmark tooling.
+## 5. 구현한 기능
 
-## Performance Benchmark
+### String
+- `SET`, `GET`, `DEL`
+- `INCR`, `DECR`
+- `MSET`, `MGET`
+- `EXISTS`, `TYPE`
+- `EXPIRE`, `TTL`, `PERSIST`
 
-The MongoDB comparison benchmark is implemented under `performance/`.
-It compares mini-redis RESP commands and MongoDB CRUD equivalents under the same workload mix.
+### List
+- `LPUSH`, `RPUSH`
+- `LPOP`, `RPOP`
+- `LRANGE`
 
-Main entry points:
+### Set
+- `SADD`, `SREM`
+- `SISMEMBER`, `SMEMBERS`
+- `SINTER`, `SUNION`, `SCARD`
 
-- `performance/run_benchmarks.py`: runs RESP vs MongoDB comparison and writes JSON/CSV/PNG reports
-- `performance/check_connections.py`: verifies both targets are reachable before a full run
-- `performance/README.md`: detailed setup, environment variables, and output format
+### Hash
+- `HSET`, `HGET`, `HDEL`
+- `HGETALL`, `HEXISTS`
+- `HINCRBY`, `HLEN`
 
-Quick start:
+### Sorted Set
+- `ZADD`, `ZSCORE`
+- `ZRANK`, `ZREVRANK`
+- `ZRANGE`, `ZREVRANGE`
+- `ZINCRBY`, `ZREM`, `ZCARD`
+
+## 6. 핵심 설계 포인트
+
+### 6-1. 동시성 문제 해결
+
+여러 요청이 동시에 같은 key를 수정할 때 값을 안전하게 지키기 위해 **Single Writer + Queue** 구조를 적용했습니다.
+
+- 모든 쓰기 명령은 queue에 넣고
+- writer thread 하나가 순서대로 처리합니다.
+
+즉, 요청은 동시에 들어와도 실제 메모리 반영은 순차적으로 일어나도록 설계했습니다.
+
+### 6-2. TTL 처리
+
+만료된 값은 두 방식으로 처리합니다.
+
+- **Lazy Expiration**: 조회 시 만료 여부 확인 후 삭제
+- **Background Cleanup**: 주기적으로 만료 key 정리
+
+### 6-3. 데이터 무효화
+
+삭제, 타입 변경, 버전 전환 이후 오래된 결과가 남지 않도록 `invalidation_manager.py`를 통해 캐시 무효화를 처리했습니다.
+
+### 6-4. 복구와 내구성
+
+메모리 기반 구조의 한계를 보완하기 위해 두 가지를 구현했습니다.
+
+- **Snapshot / Restore**
+- **AOF(Append Only File) 기반 복구**
+
+복구 중에는 새 요청을 잠시 대기시켜 데이터가 섞이지 않도록 했습니다.
+
+## 7. 외부 사용 방식
+
+이 프로젝트는 두 방식으로 사용할 수 있습니다.
+
+- **FastAPI**: HTTP 기반 확인 및 기능 테스트
+- **RESP 스타일 TCP 서버**: Redis와 비슷한 명령 흐름 확인
+
+## 8. 테스트와 검증
+
+다음 관점으로 테스트를 구성했습니다.
+
+- 기본 CRUD 테스트
+- 자료형별 명령 테스트
+- 동시성 테스트
+- snapshot / restore 테스트
+- AOF 복구 테스트
+- invalidation / version 테스트
+- 프로토콜 테스트
+
+즉, 기능뿐 아니라 엣지 케이스와 운영 시나리오도 확인하려고 했습니다.
+
+## 9. 성능 비교
+
+`performance/` 폴더에서 mini-redis와 MongoDB를 비교하는 벤치마크를 구성했습니다.
+
+비교 항목은 다음과 같습니다.
+
+- 응답 속도
+- 처리량(RPS)
+- p50 / p95 / p99 지연 시간
+
+## 9-1. 성능 그래프 시각자료
+
+## 10. 데모 흐름
+
+발표에서는 아래 순서로 보여줄 예정입니다.
+
+1. String 저장 / 조회 / 삭제
+2. Sorted Set 점수 증가와 랭킹 확인
+3. TTL 설정과 만료 확인
+4. Snapshot 또는 AOF 복구
+5. 테스트 코드와 성능 비교 구조 소개
+
+## 11. 프로젝트를 통해 배운 점
+
+이번 프로젝트를 통해 단순 자료구조 구현보다 더 중요한 것이 **동시성, 만료, 무효화, 복구 같은 운영 관점의 설계**라는 점을 배웠습니다.
+
+또한 AI를 활용해 구현 속도를 높일 수 있어도, 핵심 로직은 반드시 사람이 이해하고 검증해야 한다는 점을 다시 확인했습니다.
+
+## 12. 실행 방법
+
+### FastAPI 서버
 
 ```bash
-pip install -r performance/requirements.txt
+uvicorn main:app --reload
+```
+
+### RESP 서버
+
+```bash
+python server.py
+```
+
+### 테스트 실행
+
+```bash
+python -m unittest discover -s tests
+```
+
+### 성능 비교 실행
+
+```bash
 python -m performance.check_connections
 python -m performance.run_benchmarks
 ```
-
-The benchmark report includes latency and load metrics such as `avg`, `p50`, `p95`, `p99`, and throughput (`RPS`).
-
-## Features
-
-- REST-style endpoints for strings, lists, sets, hashes, and sorted sets
-- TTL support for keys
-- Integer and score increment operations
-
-## Run
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-You can also start the API with:
-
-```bash
-python main.py
-```
-
-The API listens on `0.0.0.0:8000` by default, so local requests still work through `http://127.0.0.1:8000`.
-
-If you want to expose the RESP/TCP server on AWS, run:
-
-```bash
-MINIREDIS_HOST=0.0.0.0 MINIREDIS_PORT=6379 python server.py
-```
-
-On EC2, make sure the instance security group allows inbound traffic to the port you use (`8000` for the API, `6379` for the RESP server).
-
-## API
-
-### Store a string value
-
-```bash
-curl -X PUT http://127.0.0.1:8000/keys/name \
-  -H "Content-Type: application/json" \
-  -d '{"value":"redis"}'
-```
-
-Example response:
-
-```json
-{
-  "result": "OK",
-  "key": "name",
-  "value": "redis"
-}
-```
-
-### Get a value
-
-```bash
-curl http://127.0.0.1:8000/keys/name
-```
-
-Example response:
-
-```json
-{
-  "key": "name",
-  "value": "redis"
-}
-```
-
-If the key does not exist, `value` is returned as `null`.
-
-### Increment a value
-
-```bash
-curl -X POST http://127.0.0.1:8000/keys/count/increment
-```
-
-Example response:
-
-```json
-{
-  "result": "OK",
-  "key": "count",
-  "value": 1
-}
-```
-
-If the key does not exist, `increment` creates it with value `1`.
-
-If the stored value is not an integer string, the API returns HTTP 400:
-
-```json
-{
-  "detail": "value is not an integer"
-}
-```
-
-### Add a list item
-
-```bash
-curl -X POST http://127.0.0.1:8000/lists/numbers/items/right \
-  -H "Content-Type: application/json" \
-  -d '{"value":"1"}'
-```
-
-### Add a set member
-
-```bash
-curl -X PUT http://127.0.0.1:8000/sets/tags/members/python
-```
-
-## Automation
-
-The repository now includes a GitHub Actions workflow at `.github/workflows/test-and-update-notion.yml`.
-
-What it does:
-
-- runs when `main` receives a push
-- executes all tests under `tests/`
-- writes the raw unittest output to `testresult.txt`
-- builds a structured QA report in `qa_report.json`
-- uploads both files as workflow artifacts
-- replaces the page content with the latest QA summary and status table on `327bd214-dd7e-80aa-a930-c2ff985f64a3`
-
-Required GitHub secrets:
-
-- `NOTION_TOKEN`: internal integration token for the target workspace
-- `NOTION_PAGE_ID`: optional override for the target page id
-
-Notion setup:
-
-1. Create an internal Notion integration.
-2. Share the target page with that integration using `... > Add connections`.
-3. Store the integration token in the `NOTION_TOKEN` repository secret.
-
-The Notion update step uses `scripts/update_notion_test_results.py` to clear the current page body and write the latest QA summary block and table.
-The test execution and QA case mapping are handled by `scripts/run_qa_suite.py`.
