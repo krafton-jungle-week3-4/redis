@@ -16,8 +16,17 @@ from threading import Event, Thread
 from typing import Literal, TypedDict
 
 from command_router import dispatch_command, get_wrong_arity_command
-from core_state import store_lock
+from core_state import (
+    expiry_store,
+    hash_store,
+    list_store,
+    set_store,
+    store_lock,
+    string_store,
+    zset_store,
+)
 from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
+from snapshot_manager import begin_snapshot, finish_snapshot, write_snapshot_file
 from ttl_manager import ensure_background_cleanup_started, purge_expired_keys
 
 ResponseType = Literal["simple_string", "bulk_string", "null", "integer", "error", "array"]
@@ -37,7 +46,6 @@ class WriteRequest:
     result: RedisResponse | None = None
 
 
-# 순차 처리가 필요한 쓰기 명령 목록입니다.
 WRITE_COMMANDS = {
     "DEL",
     "SET",
@@ -101,7 +109,6 @@ def _submit_write(command: list[str]) -> RedisResponse:
     return request.result
 
 
-# 서버 전체에서 writer는 하나만 실행되도록 모듈 import 시 한 번 시작합니다.
 writer_thread = Thread(target=_writer_loop, name="mini-redis-single-writer", daemon=True)
 writer_thread.start()
 
@@ -113,6 +120,23 @@ def execute(command: list[str]) -> RedisResponse:
         return _error(ERR_EMPTY_COMMAND)
 
     command_name = command[0].upper()
+
+    # Snapshot/Dump are handled specially to keep file I/O outside store lock.
+    if command_name in {"SNAPSHOT", "DUMP"}:
+        with store_lock:
+            purge_expired_keys()
+            wrong_arity_command = get_wrong_arity_command(command_name, command)
+            if wrong_arity_command is not None:
+                return _error(err_wrong_number_of_arguments(wrong_arity_command))
+            context = begin_snapshot(command[1] if len(command) == 2 else None)
+
+        try:
+            path = write_snapshot_file(context)
+            return {"type": "bulk_string", "value": path}
+        finally:
+            with store_lock:
+                finish_snapshot()
+
     wrong_arity_command = get_wrong_arity_command(command_name, command)
     if wrong_arity_command is not None:
         return _error(err_wrong_number_of_arguments(wrong_arity_command))

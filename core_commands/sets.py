@@ -3,6 +3,7 @@
 from typing import Any
 
 from error_contract import ERR_WRONG_TYPE_SET
+from snapshot_manager import prepare_mutable_write
 
 
 FIXED_ARITY: dict[str, int] = {
@@ -42,6 +43,8 @@ def execute_set_command(
         member = command[2]
         if _is_wrong_type_key(key, string_store, list_store, zset_store):
             return {"type": "error", "value": ERR_WRONG_TYPE_SET}
+        if key in set_store:
+            prepare_mutable_write("set", key)
         members = set_store.setdefault(key, set())
         before = len(members)
         members.add(member)
@@ -54,6 +57,10 @@ def execute_set_command(
             return {"type": "error", "value": ERR_WRONG_TYPE_SET}
         members = set_store.get(key)
         if members is None or member not in members:
+            return {"type": "integer", "value": 0}
+        prepare_mutable_write("set", key)
+        members = set_store.get(key)
+        if members is None:
             return {"type": "integer", "value": 0}
         members.remove(member)
         if not members:
