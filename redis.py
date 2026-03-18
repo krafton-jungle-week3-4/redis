@@ -1,28 +1,21 @@
-﻿"""mini-redis core entrypoint.
-
-Receives parsed command tokens and dispatches to typed command modules.
-"""
+﻿"""mini-redis core entrypoint."""
 
 from __future__ import annotations
 
-import threading
-import time
 from typing import Literal, TypedDict
 
-from core_commands.hashes import FIXED_ARITY as HASH_FIXED_ARITY, execute_hash_command
-from core_commands.lists import FIXED_ARITY as LIST_FIXED_ARITY, execute_list_command
-from core_commands.sets import (
-    FIXED_ARITY as SET_FIXED_ARITY,
-    execute_set_command,
-    has_wrong_variable_arity as has_wrong_set_variable_arity,
+from command_router import dispatch_command, get_wrong_arity_command
+from core_state import (
+    expiry_store,
+    hash_store,
+    list_store,
+    set_store,
+    store_lock,
+    string_store,
+    zset_store,
 )
-from core_commands.strings import (
-    FIXED_ARITY as STRING_FIXED_ARITY,
-    execute_string_command,
-    has_wrong_variable_arity as has_wrong_string_variable_arity,
-)
-from core_commands.zsets import FIXED_ARITY as ZSET_FIXED_ARITY, execute_zset_command
-from error_contract import ERR_EMPTY_COMMAND, ERR_VALUE_NOT_INTEGER, err_unknown_command, err_wrong_number_of_arguments
+from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
+from ttl_manager import ensure_background_cleanup_started, purge_expired_keys
 
 ResponseType = Literal["simple_string", "bulk_string", "null", "integer", "error", "array"]
 
@@ -32,193 +25,26 @@ class RedisResponse(TypedDict):
     value: str | int | float | None | list[str | None] | list[str]
 
 
-string_store: dict[str, str] = {}
-set_store: dict[str, set[str]] = {}
-list_store: dict[str, list[str]] = {}
-hash_store: dict[str, dict[str, str]] = {}
-zset_store: dict[str, dict[str, float]] = {}
-expiry_store: dict[str, float] = {}
-
-_store_lock = threading.RLock()
-_cleanup_started = False
-_cleanup_interval_sec = 1.0
-
-
 def _error(message: str) -> RedisResponse:
     return {"type": "error", "value": message}
 
 
-def _wrong_arity(command_name: str) -> RedisResponse:
-    return _error(err_wrong_number_of_arguments(command_name))
-
-
-def _key_exists(key: str) -> bool:
-    return key in string_store or key in set_store or key in list_store or key in hash_store or key in zset_store
-
-
-def _delete_key_everywhere(key: str) -> None:
-    string_store.pop(key, None)
-    set_store.pop(key, None)
-    list_store.pop(key, None)
-    hash_store.pop(key, None)
-    zset_store.pop(key, None)
-    expiry_store.pop(key, None)
-
-
-def _purge_expired_keys(now: float | None = None) -> None:
-    if now is None:
-        now = time.time()
-    expired_keys = [key for key, expires_at in expiry_store.items() if expires_at <= now]
-    for key in expired_keys:
-        _delete_key_everywhere(key)
-
-
-def _background_cleanup_loop() -> None:
-    while True:
-        time.sleep(_cleanup_interval_sec)
-        with _store_lock:
-            _purge_expired_keys()
-
-
-def _ensure_background_cleanup_started() -> None:
-    global _cleanup_started
-    if _cleanup_started:
-        return
-    _cleanup_started = True
-    thread = threading.Thread(target=_background_cleanup_loop, daemon=True)
-    thread.start()
-
-
-def _handle_common_key_commands(command_name: str, command: list[str]) -> RedisResponse | None:
-    if command_name == "DEL":
-        key = command[1]
-        deleted = 1 if _key_exists(key) else 0
-        _delete_key_everywhere(key)
-        return {"type": "integer", "value": deleted}
-
-    if command_name == "EXISTS":
-        key = command[1]
-        return {"type": "integer", "value": 1 if _key_exists(key) else 0}
-
-    if command_name == "TYPE":
-        key = command[1]
-        if key in string_store:
-            return {"type": "bulk_string", "value": "string"}
-        if key in set_store:
-            return {"type": "bulk_string", "value": "set"}
-        if key in list_store:
-            return {"type": "bulk_string", "value": "list"}
-        if key in hash_store:
-            return {"type": "bulk_string", "value": "hash"}
-        if key in zset_store:
-            return {"type": "bulk_string", "value": "zset"}
-        return {"type": "bulk_string", "value": "none"}
-
-    if command_name == "EXPIRE":
-        key = command[1]
-        try:
-            seconds = int(command[2])
-        except ValueError:
-            return {"type": "error", "value": ERR_VALUE_NOT_INTEGER}
-        if seconds < 0:
-            return {"type": "error", "value": ERR_VALUE_NOT_INTEGER}
-        if not _key_exists(key):
-            return {"type": "integer", "value": 0}
-        expiry_store[key] = time.time() + seconds
-        _purge_expired_keys()
-        return {"type": "integer", "value": 1}
-
-    if command_name == "TTL":
-        key = command[1]
-        if not _key_exists(key):
-            return {"type": "integer", "value": -2}
-        expires_at = expiry_store.get(key)
-        if expires_at is None:
-            return {"type": "integer", "value": -1}
-        remaining = int(expires_at - time.time())
-        if remaining < 0:
-            _delete_key_everywhere(key)
-            return {"type": "integer", "value": -2}
-        return {"type": "integer", "value": remaining}
-
-    if command_name == "PERSIST":
-        key = command[1]
-        if not _key_exists(key):
-            return {"type": "integer", "value": 0}
-        removed = 1 if key in expiry_store else 0
-        expiry_store.pop(key, None)
-        return {"type": "integer", "value": removed}
-
-    return None
-
-
 def execute(command: list[str]) -> RedisResponse:
-    _ensure_background_cleanup_started()
+    ensure_background_cleanup_started(lambda: store_lock)
 
-    with _store_lock:
-        _purge_expired_keys()
+    with store_lock:
+        purge_expired_keys()
 
         if not command:
             return _error(ERR_EMPTY_COMMAND)
 
         command_name = command[0].upper()
+        wrong_arity_command = get_wrong_arity_command(command_name, command)
+        if wrong_arity_command is not None:
+            return _error(err_wrong_number_of_arguments(wrong_arity_command))
 
-        common_fixed_arity = {
-            "DEL": 2,
-            "EXISTS": 2,
-            "TYPE": 2,
-            "EXPIRE": 3,
-            "TTL": 2,
-            "PERSIST": 2,
-        }
-        if command_name in common_fixed_arity and len(command) != common_fixed_arity[command_name]:
-            return _wrong_arity(command_name)
-
-        if command_name in STRING_FIXED_ARITY and len(command) != STRING_FIXED_ARITY[command_name]:
-            return _wrong_arity(command_name)
-        if command_name in SET_FIXED_ARITY and len(command) != SET_FIXED_ARITY[command_name]:
-            return _wrong_arity(command_name)
-        if command_name in LIST_FIXED_ARITY and len(command) != LIST_FIXED_ARITY[command_name]:
-            return _wrong_arity(command_name)
-        if command_name in HASH_FIXED_ARITY and len(command) != HASH_FIXED_ARITY[command_name]:
-            return _wrong_arity(command_name)
-        if command_name in ZSET_FIXED_ARITY and len(command) != ZSET_FIXED_ARITY[command_name]:
-            return _wrong_arity(command_name)
-
-        if has_wrong_string_variable_arity(command_name, command):
-            return _wrong_arity(command_name)
-        if has_wrong_set_variable_arity(command_name, command):
-            return _wrong_arity(command_name)
-
-        common_result = _handle_common_key_commands(command_name, command)
-        if common_result is not None:
-            return common_result
-
-        # SET/MSET은 기본 Redis 동작처럼 기존 TTL을 제거한다.
-        if command_name == "SET":
-            expiry_store.pop(command[1], None)
-        if command_name == "MSET":
-            for index in range(1, len(command), 2):
-                expiry_store.pop(command[index], None)
-
-        string_result = execute_string_command(command_name, command, string_store, set_store, list_store, zset_store)
-        if string_result is not None:
-            return string_result
-
-        set_result = execute_set_command(command_name, command, string_store, set_store, list_store, zset_store)
-        if set_result is not None:
-            return set_result
-
-        list_result = execute_list_command(command_name, command, string_store, set_store, list_store, zset_store)
-        if list_result is not None:
-            return list_result
-
-        hash_result = execute_hash_command(command_name, command, string_store, set_store, list_store, zset_store, hash_store)
-        if hash_result is not None:
-            return hash_result
-
-        zset_result = execute_zset_command(command_name, command, string_store, set_store, list_store, zset_store)
-        if zset_result is not None:
-            return zset_result
+        result = dispatch_command(command_name, command)
+        if result is not None:
+            return result
 
         return _error(err_unknown_command(command[0]))
