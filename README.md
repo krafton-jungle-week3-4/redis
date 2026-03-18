@@ -16,6 +16,28 @@ performance/
 - `redis.py` contains the RESP-style in-memory command core.
 - `core_commands/` contains command handlers split by data type.
 - `common/` contains shared helpers used by the REST server.
+- `performance/` contains the mini-redis vs MongoDB benchmark tooling.
+
+## Performance Benchmark
+
+The MongoDB comparison benchmark is implemented under `performance/`.
+It compares mini-redis RESP commands and MongoDB CRUD equivalents under the same workload mix.
+
+Main entry points:
+
+- `performance/run_benchmarks.py`: runs RESP vs MongoDB comparison and writes JSON/CSV/PNG reports
+- `performance/check_connections.py`: verifies both targets are reachable before a full run
+- `performance/README.md`: detailed setup, environment variables, and output format
+
+Quick start:
+
+```bash
+pip install -r performance/requirements.txt
+python -m performance.check_connections
+python -m performance.run_benchmarks
+```
+
+The benchmark report includes latency and load metrics such as `avg`, `p50`, `p95`, `p99`, and throughput (`RPS`).
 
 ## Features
 
