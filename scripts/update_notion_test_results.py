@@ -5,6 +5,8 @@ import argparse
 import json
 import os
 import sys
+import time
+from urllib.parse import urlencode
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -117,6 +119,7 @@ def build_children(report: dict) -> list[dict]:
         paragraph_block("💡 요약 정보", bold=True),
         bullet_block(f"생성 시각: {report['generated_at']}"),
         bullet_block(f"실행 결과: {report['summary_text']}"),
+        bullet_block(f"소요 시간: {report['duration_sec']}초"),
         bullet_block(f"명령어: {report['command']}"),
     ]
 
@@ -173,6 +176,79 @@ def append_blocks(page_id: str, token: str, children: list[dict], dry_run: bool)
         raise RuntimeError(f"Failed to reach Notion API: {exc}") from exc
 
 
+def fetch_block_children(page_id: str, token: str) -> list[dict]:
+    children: list[dict] = []
+    next_cursor: str | None = None
+
+    while True:
+        params = {"page_size": 100}
+        if next_cursor is not None:
+            params["start_cursor"] = next_cursor
+        url = f"https://api.notion.com/v1/blocks/{page_id}/children?{urlencode(params)}"
+        request = Request(
+            url=url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Notion-Version": NOTION_VERSION,
+            },
+            method="GET",
+        )
+
+        try:
+            with urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Failed to read existing Notion blocks ({exc.code}): {body}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Failed to reach Notion API: {exc}") from exc
+
+        children.extend(payload.get("results", []))
+        if not payload.get("has_more"):
+            return children
+        next_cursor = payload.get("next_cursor")
+
+
+def delete_block(block_id: str, token: str) -> None:
+    request = Request(
+        url=f"https://api.notion.com/v1/blocks/{block_id}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Notion-Version": NOTION_VERSION,
+        },
+        method="DELETE",
+    )
+
+    try:
+        with urlopen(request, timeout=30) as response:
+            response.read()
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Failed to delete Notion block {block_id} ({exc.code}): {body}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Failed to reach Notion API: {exc}") from exc
+
+
+def clear_page_children(page_id: str, token: str, dry_run: bool) -> None:
+    children = fetch_block_children(page_id, token)
+    if dry_run:
+        print(json.dumps({"delete_block_ids": [child["id"] for child in children]}, ensure_ascii=False, indent=2))
+        return
+
+    remaining = children
+    for _ in range(10):
+        for child in remaining:
+            delete_block(child["id"], token)
+
+        time.sleep(0.5)
+        remaining = fetch_block_children(page_id, token)
+        if not remaining:
+            return
+
+    unresolved_ids = ", ".join(child["id"] for child in remaining)
+    raise RuntimeError(f"Notion page content could not be fully cleared. Remaining block ids: {unresolved_ids}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Append QA status report to a Notion page.")
     parser.add_argument("report_file", help="Path to the generated QA report JSON file")
@@ -189,6 +265,8 @@ def main() -> int:
         raise RuntimeError("NOTION_TOKEN is required to update the Notion page")
 
     children = build_children(report)
+    if not args.dry_run:
+        clear_page_children(page_id, token, dry_run=False)
     append_blocks(page_id, token, children, args.dry_run)
     print(f"Updated Notion page {page_id} with QA report {report_path.name}.")
     return 0
