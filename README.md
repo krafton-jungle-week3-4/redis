@@ -1,4 +1,4 @@
-# mini-redis
+﻿# mini-redis
 
 A minimal Redis-like server built with Python and FastAPI.
 
@@ -6,15 +6,16 @@ A minimal Redis-like server built with Python and FastAPI.
 
 ```text
 main.py
+redis.py
+core_commands/
 common/
-strings/
-lists/
-sets/
-hashes/
-zsets/
+performance/
 ```
 
-Each data type lives in its own package, while `common/` contains shared store state, helpers, and common routes.
+- `main.py` contains the REST-style API server.
+- `redis.py` contains the RESP-style in-memory command core.
+- `core_commands/` contains command handlers split by data type.
+- `common/` contains shared helpers used by the REST server.
 
 ## Features
 
