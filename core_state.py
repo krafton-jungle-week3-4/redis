@@ -137,6 +137,26 @@ def restore_state(snapshot: dict[str, Any]) -> None:
     invalidate_all()
 
 
+def merge_state(snapshot: dict[str, Any]) -> None:
+    """Merge snapshot into active namespace state."""
+    string_store.update(snapshot.get("strings", {}))
+    set_store.update({key: set(value) for key, value in snapshot.get("sets", {}).items()})
+    list_store.update({key: list(value) for key, value in snapshot.get("lists", {}).items()})
+    hash_store.update({key: dict(value) for key, value in snapshot.get("hashes", {}).items()})
+    zset_store.update(
+        {key: {member: float(score) for member, score in value.items()} for key, value in snapshot.get("zsets", {}).items()}
+    )
+    archived_zset_store.update(
+        {
+            key: {member: float(score) for member, score in value.items()}
+            for key, value in snapshot.get("archived_zsets", {}).items()
+        }
+    )
+    closed_zset_keys.update(snapshot.get("closed_zsets", []))
+    expiry_store.update({key: float(value) for key, value in snapshot.get("expiry", {}).items()})
+    invalidate_all()
+
+
 def _capture_namespace_state() -> dict[str, Any]:
     return {
         "strings": dict(string_store),
