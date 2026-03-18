@@ -1,5 +1,7 @@
 ﻿# Mini Redis
-<img width="2381" height="1419" alt="image" src="https://github.com/user-attachments/assets/ec49ddc9-56a6-4692-95a8-bca6cefd1402" />
+<img width="2386" height="1412" alt="image" src="https://github.com/user-attachments/assets/e5e94f89-00e5-4e06-9425-52cb0ea95e62" />
+
+
 
 하루 안에 Redis의 핵심 개념을 직접 구현하고, AI로 만든 코드를 팀이 이해하고 설명할 수 있는 수준까지 소화하는 것을 목표로 한 프로젝트입니다.
 
