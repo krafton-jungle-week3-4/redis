@@ -48,7 +48,7 @@ jobs:
           path: testresult.txt
 
       - name: Update Notion page
-        if: ${{ always() && env.NOTION_TOKEN != '' && env.NOTION_PAGE_ID != '' }}
+        if: always() && env.NOTION_TOKEN != ''
         env:
           TEST_EXIT_CODE: ${{ steps.run_tests.outputs.exit_code }}
           GITHUB_REPOSITORY: ${{ github.repository }}
