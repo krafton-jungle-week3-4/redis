@@ -16,12 +16,12 @@ from error_contract import (
 
 # 응답 dict의 type 필드는 아래 5가지만 허용한다.
 # (AGENTS.md의 Allowed Response Types를 그대로 반영)
-ResponseType = Literal["simple_string", "bulk_string", "null", "integer", "error"]
+ResponseType = Literal["simple_string", "bulk_string", "null", "integer", "error", "array"]
 
 
 class RedisResponse(TypedDict):
     type: ResponseType
-    value: str | int | None
+    value: str | int | None | list[str | None]
 
 
 # 1단계에서는 저장소도 "문자열 키/문자열 값" 단일 dict로 고정한다.
@@ -36,6 +36,13 @@ def _error(message: str) -> RedisResponse:
 
 def _wrong_arity(command_name: str) -> RedisResponse:
     return _error(err_wrong_number_of_arguments(command_name))
+
+
+def _parse_int(value: str) -> int | None:
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def execute(command: list[str]) -> RedisResponse:
@@ -63,10 +70,24 @@ def execute(command: list[str]) -> RedisResponse:
         "DEL": 2,
         "EXISTS": 2,
         "TYPE": 2,
+        "INCR": 2,
+        "DECR": 2,
     }
 
     if command_name in expected_arity and len(command) != expected_arity[command_name]:
         return _wrong_arity(command_name)
+
+    # MSET key value [key value ...]
+    # command를 제외한 토큰 개수는 짝수여야 하며(키/값 쌍), 최소 1쌍 이상이어야 한다.
+    if command_name == "MSET":
+        if len(command) < 3 or (len(command) - 1) % 2 != 0:
+            return _wrong_arity(command_name)
+
+    # MGET key [key ...]
+    # 최소 1개 key는 필요하다.
+    if command_name == "MGET":
+        if len(command) < 2:
+            return _wrong_arity(command_name)
 
     # 이제부터는 계약된 최소 명령만 처리한다.
     if command_name == "PING":
@@ -102,6 +123,45 @@ def execute(command: list[str]) -> RedisResponse:
         if key in store:
             return {"type": "bulk_string", "value": "string"}
         return {"type": "bulk_string", "value": "none"}
+
+    if command_name == "INCR":
+        key = command[1]
+        current = store.get(key)
+        if current is None:
+            store[key] = "1"
+            return {"type": "integer", "value": 1}
+        parsed = _parse_int(current)
+        if parsed is None:
+            return _error("ERR value is not an integer or out of range")
+        next_value = parsed + 1
+        store[key] = str(next_value)
+        return {"type": "integer", "value": next_value}
+
+    if command_name == "DECR":
+        key = command[1]
+        current = store.get(key)
+        if current is None:
+            store[key] = "-1"
+            return {"type": "integer", "value": -1}
+        parsed = _parse_int(current)
+        if parsed is None:
+            return _error("ERR value is not an integer or out of range")
+        next_value = parsed - 1
+        store[key] = str(next_value)
+        return {"type": "integer", "value": next_value}
+
+    if command_name == "MSET":
+        # command[1:] 을 key/value 페어 단위로 순회하며 저장한다.
+        for index in range(1, len(command), 2):
+            key = command[index]
+            value = command[index + 1]
+            store[key] = value
+        return {"type": "simple_string", "value": "OK"}
+
+    if command_name == "MGET":
+        keys = command[1:]
+        values = [store.get(key) for key in keys]
+        return {"type": "array", "value": values}
 
     # 지원하지 않는 명령도 예외 대신 표준 error dict로 응답한다.
     return _error(err_unknown_command(command[0]))
