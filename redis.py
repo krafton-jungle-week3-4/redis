@@ -19,7 +19,19 @@ from threading import Event, RLock, Thread
 from typing import Any, Literal, TypedDict
 
 from command_router import dispatch_command, get_wrong_arity_command
-from core_state import begin_loading, finish_loading, restore_state, store_lock, wait_until_ready
+from core_state import (
+    begin_loading,
+    expiry_store,
+    finish_loading,
+    hash_store,
+    list_store,
+    restore_state,
+    set_store,
+    store_lock,
+    string_store,
+    wait_until_ready,
+    zset_store,
+)
 from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
 from snapshot_manager import begin_snapshot, finish_snapshot, write_snapshot_file
 from ttl_manager import ensure_background_cleanup_started, purge_expired_keys
