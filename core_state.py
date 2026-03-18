@@ -1,17 +1,27 @@
-﻿"""Shared in-memory stores and key-level helpers for redis core."""
+"""Shared in-memory stores and key-level helpers for redis core."""
 
 from __future__ import annotations
 
 import threading
 from typing import Any
 
+from invalidation_manager import invalidate_all, invalidate_key, read_exists, read_string_value, read_type
 
-string_store: dict[str, str] = {}
-set_store: dict[str, set[str]] = {}
-list_store: dict[str, list[str]] = {}
-hash_store: dict[str, dict[str, str]] = {}
-zset_store: dict[str, dict[str, float]] = {}
-expiry_store: dict[str, float] = {}
+
+class InvalidationAwareDict(dict):
+    """테스트에서 clear()로 스토어 초기화될 때 캐시도 함께 비웁니다."""
+
+    def clear(self) -> None:  # type: ignore[override]
+        super().clear()
+        invalidate_all()
+
+
+string_store: InvalidationAwareDict[str, str] = InvalidationAwareDict()
+set_store: InvalidationAwareDict[str, set[str]] = InvalidationAwareDict()
+list_store: InvalidationAwareDict[str, list[str]] = InvalidationAwareDict()
+hash_store: InvalidationAwareDict[str, dict[str, str]] = InvalidationAwareDict()
+zset_store: InvalidationAwareDict[str, dict[str, float]] = InvalidationAwareDict()
+expiry_store: InvalidationAwareDict[str, float] = InvalidationAwareDict()
 
 # 시즌 종료된 leaderboard는 별도 보관소에 남기고, 이후 쓰기는 차단합니다.
 archived_zset_store: dict[str, dict[str, float]] = {}
@@ -23,28 +33,38 @@ loading_complete.set()
 
 
 def key_exists(key: str) -> bool:
-    return (
-        key in string_store
-        or key in set_store
-        or key in list_store
-        or key in hash_store
-        or key in zset_store
-        or key in archived_zset_store
+    return read_exists(
+        key,
+        lambda target: (
+            target in string_store
+            or target in set_store
+            or target in list_store
+            or target in hash_store
+            or target in zset_store
+            or target in archived_zset_store
+        ),
     )
 
 
 def key_type(key: str) -> str:
-    if key in string_store:
-        return "string"
-    if key in set_store:
-        return "set"
-    if key in list_store:
-        return "list"
-    if key in hash_store:
-        return "hash"
-    if key in zset_store or key in archived_zset_store:
-        return "zset"
-    return "none"
+    def _resolve_type(target: str) -> str:
+        if target in string_store:
+            return "string"
+        if target in set_store:
+            return "set"
+        if target in list_store:
+            return "list"
+        if target in hash_store:
+            return "hash"
+        if target in zset_store or target in archived_zset_store:
+            return "zset"
+        return "none"
+
+    return read_type(key, _resolve_type)
+
+
+def string_value(key: str) -> str | None:
+    return read_string_value(key, lambda target: string_store.get(target))
 
 
 def delete_key_everywhere(key: str) -> None:
@@ -56,6 +76,7 @@ def delete_key_everywhere(key: str) -> None:
     archived_zset_store.pop(key, None)
     closed_zset_keys.discard(key)
     expiry_store.pop(key, None)
+    invalidate_key(key)
 
 
 def clear_all_stores() -> None:
@@ -67,6 +88,7 @@ def clear_all_stores() -> None:
     archived_zset_store.clear()
     closed_zset_keys.clear()
     expiry_store.clear()
+    invalidate_all()
 
 
 def snapshot_state() -> dict[str, Any]:
@@ -102,6 +124,7 @@ def restore_state(snapshot: dict[str, Any]) -> None:
     )
     closed_zset_keys.update(snapshot.get("closed_zsets", []))
     expiry_store.update({key: float(value) for key, value in snapshot.get("expiry", {}).items()})
+    invalidate_all()
 
 
 def begin_loading() -> None:
