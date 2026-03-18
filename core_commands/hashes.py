@@ -3,6 +3,7 @@
 from typing import Any
 
 from error_contract import ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_HASH
+from snapshot_manager import prepare_mutable_write
 
 
 FIXED_ARITY: dict[str, int] = {
@@ -57,6 +58,11 @@ def _ensure_hash_entry(
     if fields is None:
         hash_store[key] = {}
         return hash_store[key]
+    prepare_mutable_write("hash", key)
+    fields = hash_store.get(key)
+    if fields is None:
+        hash_store[key] = {}
+        return hash_store[key]
     return fields
 
 
@@ -104,6 +110,10 @@ def execute_hash_command(
         fields = _get_hash_entry(key, string_store, set_store, list_store, zset_store, resolved_hash_store)
         if isinstance(fields, str):
             return {"type": "error", "value": fields}
+        if fields is None or field not in fields:
+            return {"type": "integer", "value": 0}
+        prepare_mutable_write("hash", key)
+        fields = resolved_hash_store.get(key)
         if fields is None or field not in fields:
             return {"type": "integer", "value": 0}
         fields.pop(field)

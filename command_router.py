@@ -30,6 +30,8 @@ COMMON_FIXED_ARITY: dict[str, int] = {
 
 
 def get_wrong_arity_command(command_name: str, command: list[str]) -> str | None:
+    if command_name in {"SNAPSHOT", "DUMP"} and len(command) not in {1, 2}:
+        return command_name
     if command_name in COMMON_FIXED_ARITY and len(command) != COMMON_FIXED_ARITY[command_name]:
         return command_name
     if command_name in STRING_FIXED_ARITY and len(command) != STRING_FIXED_ARITY[command_name]:
