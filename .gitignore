@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 .venv_win/
 performance/results/
+appendonly.aof

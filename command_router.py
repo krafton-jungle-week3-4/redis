@@ -20,6 +20,7 @@ from core_state import hash_store, list_store, set_store, string_store, zset_sto
 from invalidation_manager import invalidate_key, invalidate_many
 from season_manager import FIXED_ARITY as SEASON_FIXED_ARITY, execute_season_command
 from ttl_manager import clear_ttl_on_write, handle_ttl_command
+from version_manager import FIXED_ARITY as VERSION_FIXED_ARITY, execute_version_command
 
 COMMON_FIXED_ARITY: dict[str, int] = {
     "DEL": 2,
@@ -48,6 +49,8 @@ def get_wrong_arity_command(command_name: str, command: list[str]) -> str | None
     if command_name in COMMON_FIXED_ARITY and len(command) != COMMON_FIXED_ARITY[command_name]:
         return command_name
     if command_name in SEASON_FIXED_ARITY and len(command) != SEASON_FIXED_ARITY[command_name]:
+        return command_name
+    if command_name in VERSION_FIXED_ARITY and len(command) != VERSION_FIXED_ARITY[command_name]:
         return command_name
     if command_name in STRING_FIXED_ARITY and len(command) != STRING_FIXED_ARITY[command_name]:
         return command_name
@@ -80,6 +83,10 @@ def dispatch_command(command_name: str, command: list[str]) -> dict | None:
     season_result = execute_season_command(command_name, command)
     if season_result is not None:
         return season_result
+
+    version_result = execute_version_command(command_name, command)
+    if version_result is not None:
+        return version_result
 
     clear_ttl_on_write(command_name, command)
 

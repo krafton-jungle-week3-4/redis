@@ -23,7 +23,20 @@ from typing import Any, Literal, TypedDict
 
 from aof_manager import append_aof_command
 from command_router import STATELESS_COMMANDS, dispatch_command, get_wrong_arity_command
-from core_state import begin_loading, finish_loading, restore_state, store_lock, wait_until_ready
+from core_state import (
+    begin_loading,
+    expiry_store,
+    finish_loading,
+    hash_store,
+    list_store,
+    merge_state,
+    restore_state,
+    set_store,
+    store_lock,
+    string_store,
+    wait_until_ready,
+    zset_store,
+)
 from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
 from snapshot_manager import begin_snapshot, finish_snapshot, write_snapshot_file
 from ttl_manager import ensure_background_cleanup_started, purge_expired_keys
@@ -42,6 +55,7 @@ class WriteRequest:
 
     command: list[str] | None = None
     snapshot: dict[str, Any] | None = None
+    restore_policy: str = "replace"
     skip_aof: bool = False
     done: Event = field(default_factory=Event)
     result: RedisResponse | None = None
@@ -68,6 +82,7 @@ WRITE_COMMANDS = {
     "EXPIRE",
     "PERSIST",
     "CLOSESEASON",
+    "SWITCHVER",
 }
 
 write_queue: Queue[WriteRequest] = Queue()
@@ -90,8 +105,13 @@ def _execute_command(command: list[str], *, purge_expired: bool) -> RedisRespons
     return _error(err_unknown_command(command[0]))
 
 
-def _execute_restore_locked(snapshot: dict[str, Any]) -> RedisResponse:
-    restore_state(snapshot)
+def _execute_restore_locked(snapshot: dict[str, Any], restore_policy: str) -> RedisResponse:
+    if restore_policy == "replace":
+        restore_state(snapshot)
+    elif restore_policy == "merge":
+        merge_state(snapshot)
+    else:
+        return _error(f"ERR unsupported restore policy '{restore_policy}'")
     purge_expired_keys()
     return {"type": "simple_string", "value": "OK"}
 
@@ -102,7 +122,7 @@ def _writer_loop() -> None:
         try:
             with store_lock:
                 if request.snapshot is not None:
-                    request.result = _execute_restore_locked(request.snapshot)
+                    request.result = _execute_restore_locked(request.snapshot, request.restore_policy)
                 elif request.command is not None:
                     request.result = _execute_command(request.command, purge_expired=True)
                     # 성공한 쓰기만 AOF에 남겨야 재생 시 동일한 상태를 만들 수 있습니다.
@@ -124,8 +144,8 @@ def _submit_write(command: list[str], *, skip_aof: bool = False) -> RedisRespons
     return request.result
 
 
-def _submit_restore(snapshot: dict[str, Any]) -> RedisResponse:
-    request = WriteRequest(snapshot=snapshot, skip_aof=True)
+def _submit_restore(snapshot: dict[str, Any], restore_policy: str) -> RedisResponse:
+    request = WriteRequest(snapshot=snapshot, restore_policy=restore_policy, skip_aof=True)
     write_queue.put(request)
     request.done.wait()
     if request.result is None:
@@ -137,7 +157,7 @@ writer_thread = Thread(target=_writer_loop, name="mini-redis-single-writer", dae
 writer_thread.start()
 
 
-def restore_from_loader(loader: Callable[[], dict[str, Any]]) -> RedisResponse:
+def restore_from_loader(loader: Callable[[], dict[str, Any]], restore_policy: str = "replace") -> RedisResponse:
     """복구 시작 시점부터 새 요청을 막고, loader 결과를 writer queue에서 복구합니다."""
     ensure_background_cleanup_started(lambda: store_lock)
 
@@ -145,13 +165,13 @@ def restore_from_loader(loader: Callable[[], dict[str, Any]]) -> RedisResponse:
         begin_loading()
         try:
             snapshot = loader()
-            return _submit_restore(snapshot)
+            return _submit_restore(snapshot, restore_policy)
         finally:
             finish_loading()
 
 
-def restore_from_snapshot_data(snapshot: dict[str, Any]) -> RedisResponse:
-    return restore_from_loader(lambda: snapshot)
+def restore_from_snapshot_data(snapshot: dict[str, Any], restore_policy: str = "replace") -> RedisResponse:
+    return restore_from_loader(lambda: snapshot, restore_policy)
 
 
 def replay_from_aof_commands(commands: list[list[str]], delay_sec: float = 0.0) -> RedisResponse:

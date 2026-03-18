@@ -9,7 +9,7 @@ from invalidation_manager import invalidate_all, invalidate_key, read_exists, re
 
 
 class InvalidationAwareDict(dict):
-    """테스트에서 clear()로 스토어 초기화될 때 캐시도 함께 비웁니다."""
+    """When tests clear stores, clear read-cache as well."""
 
     def clear(self) -> None:  # type: ignore[override]
         super().clear()
@@ -23,13 +23,17 @@ hash_store: InvalidationAwareDict[str, dict[str, str]] = InvalidationAwareDict()
 zset_store: InvalidationAwareDict[str, dict[str, float]] = InvalidationAwareDict()
 expiry_store: InvalidationAwareDict[str, float] = InvalidationAwareDict()
 
-# 시즌 종료된 leaderboard는 별도 보관소에 남기고, 이후 쓰기는 차단합니다.
+# Closed leaderboard state (season settle support)
 archived_zset_store: dict[str, dict[str, float]] = {}
 closed_zset_keys: set[str] = set()
 
 store_lock = threading.RLock()
 loading_complete = threading.Event()
 loading_complete.set()
+
+_default_namespace = "default"
+_current_namespace = _default_namespace
+_namespace_store: dict[str, dict[str, Any]] = {}
 
 
 def key_exists(key: str) -> bool:
@@ -79,7 +83,7 @@ def delete_key_everywhere(key: str) -> None:
     invalidate_key(key)
 
 
-def clear_all_stores() -> None:
+def _clear_active_stores_only() -> None:
     string_store.clear()
     set_store.clear()
     list_store.clear()
@@ -88,11 +92,17 @@ def clear_all_stores() -> None:
     archived_zset_store.clear()
     closed_zset_keys.clear()
     expiry_store.clear()
+
+
+def clear_all_stores() -> None:
+    _clear_active_stores_only()
+    _namespace_store.clear()
+    _set_current_namespace(_default_namespace)
     invalidate_all()
 
 
 def snapshot_state() -> dict[str, Any]:
-    """현재 메모리 상태를 직렬화 가능한 형태로 복사합니다."""
+    """Create a JSON-serializable snapshot from active namespace state."""
     return {
         "strings": dict(string_store),
         "sets": {key: sorted(value) for key, value in set_store.items()},
@@ -106,8 +116,8 @@ def snapshot_state() -> dict[str, Any]:
 
 
 def restore_state(snapshot: dict[str, Any]) -> None:
-    """스냅샷 내용을 현재 메모리 상태로 완전히 교체합니다."""
-    clear_all_stores()
+    """Replace active namespace state from snapshot payload."""
+    _clear_active_stores_only()
 
     string_store.update(snapshot.get("strings", {}))
     set_store.update({key: set(value) for key, value in snapshot.get("sets", {}).items()})
@@ -125,6 +135,77 @@ def restore_state(snapshot: dict[str, Any]) -> None:
     closed_zset_keys.update(snapshot.get("closed_zsets", []))
     expiry_store.update({key: float(value) for key, value in snapshot.get("expiry", {}).items()})
     invalidate_all()
+
+
+def merge_state(snapshot: dict[str, Any]) -> None:
+    """Merge snapshot into active namespace state."""
+    string_store.update(snapshot.get("strings", {}))
+    set_store.update({key: set(value) for key, value in snapshot.get("sets", {}).items()})
+    list_store.update({key: list(value) for key, value in snapshot.get("lists", {}).items()})
+    hash_store.update({key: dict(value) for key, value in snapshot.get("hashes", {}).items()})
+    zset_store.update(
+        {key: {member: float(score) for member, score in value.items()} for key, value in snapshot.get("zsets", {}).items()}
+    )
+    archived_zset_store.update(
+        {
+            key: {member: float(score) for member, score in value.items()}
+            for key, value in snapshot.get("archived_zsets", {}).items()
+        }
+    )
+    closed_zset_keys.update(snapshot.get("closed_zsets", []))
+    expiry_store.update({key: float(value) for key, value in snapshot.get("expiry", {}).items()})
+    invalidate_all()
+
+
+def _capture_namespace_state() -> dict[str, Any]:
+    return {
+        "strings": dict(string_store),
+        "sets": {key: set(value) for key, value in set_store.items()},
+        "lists": {key: list(value) for key, value in list_store.items()},
+        "hashes": {key: dict(value) for key, value in hash_store.items()},
+        "zsets": {key: dict(value) for key, value in zset_store.items()},
+        "archived_zsets": {key: dict(value) for key, value in archived_zset_store.items()},
+        "closed_zsets": set(closed_zset_keys),
+        "expiry": dict(expiry_store),
+    }
+
+
+def _load_namespace_state(snapshot: dict[str, Any]) -> None:
+    _clear_active_stores_only()
+
+    string_store.update(snapshot.get("strings", {}))
+    set_store.update({key: set(value) for key, value in snapshot.get("sets", {}).items()})
+    list_store.update({key: list(value) for key, value in snapshot.get("lists", {}).items()})
+    hash_store.update({key: dict(value) for key, value in snapshot.get("hashes", {}).items()})
+    zset_store.update({key: dict(value) for key, value in snapshot.get("zsets", {}).items()})
+    archived_zset_store.update({key: dict(value) for key, value in snapshot.get("archived_zsets", {}).items()})
+    closed_zset_keys.update(snapshot.get("closed_zsets", set()))
+    expiry_store.update({key: float(value) for key, value in snapshot.get("expiry", {}).items()})
+    invalidate_all()
+
+
+def _set_current_namespace(namespace: str) -> None:
+    global _current_namespace
+    _current_namespace = namespace
+
+
+def current_namespace() -> str:
+    return _current_namespace
+
+
+def switch_namespace(namespace: str) -> None:
+    # Save current active namespace state.
+    _namespace_store[_current_namespace] = _capture_namespace_state()
+
+    # Load target namespace state if present, otherwise start from empty.
+    target_snapshot = _namespace_store.get(namespace)
+    if target_snapshot is None:
+        _clear_active_stores_only()
+        invalidate_all()
+    else:
+        _load_namespace_state(target_snapshot)
+
+    _set_current_namespace(namespace)
 
 
 def begin_loading() -> None:

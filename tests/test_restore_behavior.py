@@ -57,6 +57,40 @@ class RestoreBehaviorTests(unittest.TestCase):
             self.assertEqual(execute(["GET", "name"]), {"type": "bulk_string", "value": "redis"})
             self.assertEqual(execute(["GET", "pending"]), {"type": "bulk_string", "value": "ready"})
 
+    def test_restore_replace_policy_replaces_existing_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            snapshot_path = Path(tmp_dir) / "snapshot-replace.json"
+
+            execute(["SET", "same", "from-snapshot"])
+            execute(["SET", "new-only", "from-snapshot"])
+            save_snapshot(snapshot_path)
+
+            execute(["SET", "same", "live-now"])
+            execute(["SET", "old-only", "live-now"])
+
+            restore_snapshot(snapshot_path, policy="replace")
+
+            self.assertEqual(execute(["GET", "same"]), {"type": "bulk_string", "value": "from-snapshot"})
+            self.assertEqual(execute(["GET", "new-only"]), {"type": "bulk_string", "value": "from-snapshot"})
+            self.assertEqual(execute(["GET", "old-only"]), {"type": "null", "value": None})
+
+    def test_restore_merge_policy_merges_snapshot_into_existing_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            snapshot_path = Path(tmp_dir) / "snapshot-merge.json"
+
+            execute(["SET", "same", "from-snapshot"])
+            execute(["SET", "incoming", "from-snapshot"])
+            save_snapshot(snapshot_path)
+
+            execute(["SET", "same", "live-updated"])
+            execute(["SET", "stay", "live-updated"])
+
+            restore_snapshot(snapshot_path, policy="merge")
+
+            self.assertEqual(execute(["GET", "same"]), {"type": "bulk_string", "value": "from-snapshot"})
+            self.assertEqual(execute(["GET", "incoming"]), {"type": "bulk_string", "value": "from-snapshot"})
+            self.assertEqual(execute(["GET", "stay"]), {"type": "bulk_string", "value": "live-updated"})
+
 
 if __name__ == "__main__":
     unittest.main()
