@@ -6,6 +6,7 @@ RESP 파싱이 끝난 명령 배열을 받아서,
 
 from typing import Literal, TypedDict
 
+from core_commands.hashes import FIXED_ARITY as HASH_FIXED_ARITY, execute_hash_command
 from core_commands.lists import FIXED_ARITY as LIST_FIXED_ARITY, execute_list_command
 from core_commands.sets import (
     FIXED_ARITY as SET_FIXED_ARITY,
@@ -30,6 +31,7 @@ class RedisResponse(TypedDict):
 string_store: dict[str, str] = {}
 set_store: dict[str, set[str]] = {}
 list_store: dict[str, list[str]] = {}
+hash_store: dict[str, dict[str, str]] = {}
 
 
 def _error(message: str) -> RedisResponse:
@@ -43,15 +45,16 @@ def _wrong_arity(command_name: str) -> RedisResponse:
 def _handle_common_key_commands(command_name: str, command: list[str]) -> RedisResponse | None:
     if command_name == "DEL":
         key = command[1]
-        deleted = 1 if key in string_store or key in set_store or key in list_store else 0
+        deleted = 1 if key in string_store or key in set_store or key in list_store or key in hash_store else 0
         string_store.pop(key, None)
         set_store.pop(key, None)
         list_store.pop(key, None)
+        hash_store.pop(key, None)
         return {"type": "integer", "value": deleted}
 
     if command_name == "EXISTS":
         key = command[1]
-        exists = key in string_store or key in set_store or key in list_store
+        exists = key in string_store or key in set_store or key in list_store or key in hash_store
         return {"type": "integer", "value": 1 if exists else 0}
 
     if command_name == "TYPE":
@@ -62,6 +65,8 @@ def _handle_common_key_commands(command_name: str, command: list[str]) -> RedisR
             return {"type": "bulk_string", "value": "set"}
         if key in list_store:
             return {"type": "bulk_string", "value": "list"}
+        if key in hash_store:
+            return {"type": "bulk_string", "value": "hash"}
         return {"type": "bulk_string", "value": "none"}
 
     return None
@@ -85,6 +90,8 @@ def execute(command: list[str]) -> RedisResponse:
         return _wrong_arity(command_name)
     if command_name in LIST_FIXED_ARITY and len(command) != LIST_FIXED_ARITY[command_name]:
         return _wrong_arity(command_name)
+    if command_name in HASH_FIXED_ARITY and len(command) != HASH_FIXED_ARITY[command_name]:
+        return _wrong_arity(command_name)
 
     # MSET/MGET, SINTER/SUNION처럼 가변 길이 명령은 별도 규칙으로 검사합니다.
     if has_wrong_string_variable_arity(command_name, command):
@@ -107,5 +114,9 @@ def execute(command: list[str]) -> RedisResponse:
     list_result = execute_list_command(command_name, command, string_store, set_store, list_store)
     if list_result is not None:
         return list_result
+
+    hash_result = execute_hash_command(command_name, command, string_store, set_store, list_store, hash_store)
+    if hash_result is not None:
+        return hash_result
 
     return _error(err_unknown_command(command[0]))
