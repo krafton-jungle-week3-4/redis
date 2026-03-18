@@ -35,8 +35,8 @@ jobs:
         shell: bash
         run: |
           set +e
-          python -m unittest discover -s tests -p 'test_*.py' -q 2>&1 | tee testresult.txt
-          status=${PIPESTATUS[0]}
+          python scripts/run_qa_suite.py --results-file testresult.txt --report-file qa_report.json
+          status=$?
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit 0
 
@@ -45,7 +45,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: testresult
-          path: testresult.txt
+          path: |
+            testresult.txt
+            qa_report.json
 
       - name: Update Notion page
         id: update_notion
@@ -59,7 +61,7 @@ jobs:
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-        run: python scripts/update_notion_test_results.py testresult.txt
+        run: python scripts/update_notion_test_results.py qa_report.json
 
       - name: Record Notion update failure
         if: always() && steps.update_notion.outcome == 'failure'

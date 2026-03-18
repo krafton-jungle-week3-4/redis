@@ -5,7 +5,6 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -13,7 +12,6 @@ from urllib.request import Request, urlopen
 
 DEFAULT_NOTION_PAGE_ID = "327bd214-dd7e-80aa-a930-c2ff985f64a3"
 NOTION_VERSION = "2026-03-11"
-MAX_RICH_TEXT_CHARS = 1800
 
 
 def normalize_page_id(page_id: str) -> str:
@@ -26,59 +24,8 @@ def normalize_page_id(page_id: str) -> str:
     )
 
 
-def read_results(path: Path) -> str:
-    return path.read_text(encoding="utf-8").strip()
-
-
-def chunk_text(text: str, size: int = MAX_RICH_TEXT_CHARS) -> list[str]:
-    if not text:
-        return [""]
-    return [text[index:index + size] for index in range(0, len(text), size)]
-
-
-def text_block(content: str) -> dict:
-    return {
-        "object": "block",
-        "type": "paragraph",
-        "paragraph": {
-            "rich_text": [{"type": "text", "text": {"content": content}}],
-        },
-    }
-
-
-def bullet_block(content: str) -> dict:
-    return {
-        "object": "block",
-        "type": "bulleted_list_item",
-        "bulleted_list_item": {
-            "rich_text": [{"type": "text", "text": {"content": content}}],
-        },
-    }
-
-
-def heading_block(content: str) -> dict:
-    return {
-        "object": "block",
-        "type": "heading_2",
-        "heading_2": {
-            "rich_text": [{"type": "text", "text": {"content": content}}],
-        },
-    }
-
-
-def code_block(content: str) -> dict:
-    return {
-        "object": "block",
-        "type": "code",
-        "code": {
-            "rich_text": [{"type": "text", "text": {"content": content}}],
-            "language": "plain text",
-        },
-    }
-
-
-def divider_block() -> dict:
-    return {"object": "block", "type": "divider", "divider": {}}
+def read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_run_url() -> str | None:
@@ -90,39 +37,103 @@ def build_run_url() -> str | None:
     return f"{server_url}/{repository}/actions/runs/{run_id}"
 
 
-def build_children(result_text: str, status_text: str) -> list[dict]:
-    branch = os.getenv("GITHUB_REF_NAME", "unknown")
-    repository = os.getenv("GITHUB_REPOSITORY", "unknown")
-    commit_sha = os.getenv("GITHUB_SHA", "unknown")
-    event_name = os.getenv("GITHUB_EVENT_NAME", "unknown")
+def rich_text(content: str, *, bold: bool = False) -> dict:
+    return {
+        "type": "text",
+        "text": {"content": content},
+        "annotations": {
+            "bold": bold,
+            "italic": False,
+            "strikethrough": False,
+            "underline": False,
+            "code": False,
+            "color": "default",
+        },
+    }
+
+
+def heading_block(content: str) -> dict:
+    return {
+        "object": "block",
+        "type": "heading_2",
+        "heading_2": {"rich_text": [rich_text(content)]},
+    }
+
+
+def paragraph_block(content: str, *, bold: bool = False) -> dict:
+    return {
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {"rich_text": [rich_text(content, bold=bold)]},
+    }
+
+
+def bullet_block(content: str) -> dict:
+    return {
+        "object": "block",
+        "type": "bulleted_list_item",
+        "bulleted_list_item": {"rich_text": [rich_text(content)]},
+    }
+
+
+def divider_block() -> dict:
+    return {"object": "block", "type": "divider", "divider": {}}
+
+
+def table_row(cells: list[str], *, bold: bool = False) -> dict:
+    return {
+        "object": "block",
+        "type": "table_row",
+        "table_row": {
+            "cells": [[rich_text(cell, bold=bold)] for cell in cells],
+        },
+    }
+
+
+def table_block(rows: list[list[str]]) -> dict:
+    header = table_row(["ID", "항목", "상태", "상세 내용", "우선순위"], bold=True)
+    data_rows = [table_row(row) for row in rows]
+    return {
+        "object": "block",
+        "type": "table",
+        "table": {
+            "table_width": 5,
+            "has_column_header": True,
+            "has_row_header": False,
+            "children": [header, *data_rows],
+        },
+    }
+
+
+def build_children(report: dict) -> list[dict]:
     run_url = build_run_url()
-    timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    rows = [
+        [case["id"], case["title"], case["status_label"], case["detail"], case["priority"]]
+        for case in report["cases"]
+    ]
 
     children = [
-        heading_block(f"자동 테스트 결과 - {timestamp}"),
-        bullet_block(f"저장소: {repository}"),
-        bullet_block(f"브랜치: {branch}"),
-        bullet_block(f"이벤트: {event_name}"),
-        bullet_block(f"커밋: {commit_sha[:7]}"),
-        bullet_block(f"결과: {status_text}"),
+        heading_block(report["title"]),
+        paragraph_block("💡 요약 정보", bold=True),
+        bullet_block(f"생성 시각: {report['generated_at']}"),
+        bullet_block(f"실행 결과: {report['summary_text']}"),
+        bullet_block(f"명령어: {report['command']}"),
     ]
 
     if run_url is not None:
-        children.append(text_block(f"GitHub Actions 실행 링크: {run_url}"))
+        children.append(paragraph_block(f"GitHub Actions 실행 링크: {run_url}"))
 
-    children.append(text_block("원본 테스트 출력:"))
-    for chunk in chunk_text(result_text):
-        children.append(code_block(chunk))
-
-    children.append(divider_block())
+    children.extend(
+        [
+            table_block(rows),
+            divider_block(),
+        ]
+    )
     return children
 
 
 def append_blocks(page_id: str, token: str, children: list[dict], dry_run: bool) -> None:
-    payload = {
-        "children": children,
-        "position": {"type": "start"},
-    }
+    payload = {"children": children}
     if dry_run:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
@@ -163,16 +174,13 @@ def append_blocks(page_id: str, token: str, children: list[dict], dry_run: bool)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Append latest test results to a Notion page.")
-    parser.add_argument("results_file", help="Path to the captured test output file")
+    parser = argparse.ArgumentParser(description="Append QA status report to a Notion page.")
+    parser.add_argument("report_file", help="Path to the generated QA report JSON file")
     parser.add_argument("--dry-run", action="store_true", help="Print the Notion payload instead of sending it")
     args = parser.parse_args()
 
-    results_path = Path(args.results_file)
-    result_text = read_results(results_path)
-
-    exit_code = int(os.getenv("TEST_EXIT_CODE", "0"))
-    status_text = "PASS" if exit_code == 0 else f"FAIL (exit code {exit_code})"
+    report_path = Path(args.report_file)
+    report = read_json(report_path)
 
     page_id = normalize_page_id(os.getenv("NOTION_PAGE_ID") or DEFAULT_NOTION_PAGE_ID)
     token = os.getenv("NOTION_TOKEN", "")
@@ -180,9 +188,9 @@ def main() -> int:
     if not args.dry_run and not token:
         raise RuntimeError("NOTION_TOKEN is required to update the Notion page")
 
-    children = build_children(result_text, status_text)
+    children = build_children(report)
     append_blocks(page_id, token, children, args.dry_run)
-    print(f"Updated Notion page {page_id} with latest test results ({status_text}).")
+    print(f"Updated Notion page {page_id} with QA report {report_path.name}.")
     return 0
 
 
