@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
 
     steps:
       - name: Check out repository
@@ -45,10 +48,8 @@ jobs:
           path: testresult.txt
 
       - name: Update Notion page
-        if: always() && secrets.NOTION_TOKEN != ''
+        if: ${{ always() && env.NOTION_TOKEN != '' && env.NOTION_PAGE_ID != '' }}
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
           TEST_EXIT_CODE: ${{ steps.run_tests.outputs.exit_code }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
