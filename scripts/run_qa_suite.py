@@ -471,24 +471,25 @@ def evaluate_case(case: dict, status_by_test_id: dict[str, str], broken_modules:
     related_tests = case["tests"]
     discovered = [test_id for test_id in related_tests if test_id in status_by_test_id]
     related_modules = {test_id.rsplit(".", 1)[0] for test_id in related_tests}
+
     if broken_modules & related_modules:
         status = "fail"
-        detail = "관련 테스트 모듈 import 또는 초기화에 실패했습니다"
+        detail = "관련 테스트 모듈 import 또는 초기화에 실패했습니다."
     elif not discovered:
         status = "not_covered"
-        detail = "연결된 자동 테스트를 찾지 못했습니다"
+        detail = "관련 자동 테스트를 찾지 못했습니다."
     elif any(status_by_test_id[test_id] == "fail" for test_id in discovered):
         status = "fail"
         detail = case["fail_detail"]
     elif any(status_by_test_id[test_id] == "skip" for test_id in discovered):
         status = "partial"
-        detail = "관련 테스트 일부가 skip 처리되었습니다"
+        detail = "관련 테스트 일부가 skip 처리되었습니다."
     elif all(status_by_test_id[test_id] == "pass" for test_id in discovered):
         status = "pass"
         detail = case["pass_detail"]
     else:
         status = "partial"
-        detail = "관련 테스트 결과를 완전히 판정하지 못했습니다"
+        detail = "관련 테스트 결과를 완전히 판정하지 못했습니다."
 
     return {
         "id": case["id"],
