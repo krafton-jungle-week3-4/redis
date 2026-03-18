@@ -6,10 +6,21 @@ import math
 import statistics
 import time
 import uuid
-from typing import Callable
+from typing import Callable, Protocol
 
 
-ClientFactory = Callable[[], object]
+class BenchmarkClient(Protocol):
+    def __enter__(self) -> "BenchmarkClient": ...
+    def __exit__(self, exc_type, exc, tb) -> None: ...
+    def ping(self) -> str: ...
+    def set_value(self, key: str, value: str) -> None: ...
+    def get_value(self, key: str) -> str | None: ...
+    def delete_value(self, key: str) -> int: ...
+    def exists(self, key: str) -> bool: ...
+    def type_of(self, key: str) -> str: ...
+
+
+ClientFactory = Callable[[], BenchmarkClient]
 
 
 @dataclass(frozen=True)
@@ -84,12 +95,29 @@ def run_latency_benchmark(
 
     value = "benchmark-value"
     key_prefix = f"perf:{backend_name}:latency:{uuid.uuid4().hex}"
+    ping_samples: list[float] = []
     set_samples: list[float] = []
     get_samples: list[float] = []
+    exists_samples: list[float] = []
+    type_samples: list[float] = []
+    del_samples: list[float] = []
 
     with client_factory() as client:
+        client.ping()
         client.set_value(f"{key_prefix}:warmup", value)
         client.get_value(f"{key_prefix}:warmup")
+        client.exists(f"{key_prefix}:warmup")
+        client.type_of(f"{key_prefix}:warmup")
+        client.delete_value(f"{key_prefix}:warmup")
+
+        for _ in range(iterations):
+            start = time.perf_counter()
+            result = client.ping()
+            ping_samples.append((time.perf_counter() - start) * 1000)
+            if result != "PONG":
+                raise RuntimeError(
+                    f"{backend_name} returned an unexpected ping result: {result!r}"
+                )
 
         for index in range(iterations):
             key = f"{key_prefix}:item:{index}"
@@ -107,9 +135,45 @@ def run_latency_benchmark(
                     f"{backend_name} returned an unexpected value for {key!r}: {result!r}"
                 )
 
+        for index in range(iterations):
+            key = f"{key_prefix}:item:{index}"
+            start = time.perf_counter()
+            result = client.exists(key)
+            exists_samples.append((time.perf_counter() - start) * 1000)
+            if not result:
+                raise RuntimeError(f"{backend_name} reported missing key for EXISTS: {key!r}")
+
+        for index in range(iterations):
+            key = f"{key_prefix}:item:{index}"
+            start = time.perf_counter()
+            result = client.type_of(key)
+            type_samples.append((time.perf_counter() - start) * 1000)
+            if result != "string":
+                raise RuntimeError(
+                    f"{backend_name} returned an unexpected TYPE for {key!r}: {result!r}"
+                )
+
+        for index in range(iterations):
+            key = f"{key_prefix}:delete:{index}"
+            client.set_value(key, value)
+
+        for index in range(iterations):
+            key = f"{key_prefix}:delete:{index}"
+            start = time.perf_counter()
+            deleted = client.delete_value(key)
+            del_samples.append((time.perf_counter() - start) * 1000)
+            if deleted != 1:
+                raise RuntimeError(
+                    f"{backend_name} returned an unexpected DEL result for {key!r}: {deleted!r}"
+                )
+
     return {
+        "ping": asdict(_summarize_latency(ping_samples)),
         "set": asdict(_summarize_latency(set_samples)),
         "get": asdict(_summarize_latency(get_samples)),
+        "exists": asdict(_summarize_latency(exists_samples)),
+        "type": asdict(_summarize_latency(type_samples)),
+        "del": asdict(_summarize_latency(del_samples)),
     }
 
 
@@ -126,18 +190,43 @@ def _run_load_worker(
     error_count = 0
 
     with client_factory() as client:
+        last_set_key = f"{key_prefix}:worker:{worker_id}:bootstrap"
+        client.set_value(last_set_key, "bootstrap-value")
+
         for offset in range(request_count):
             global_index = start_index + offset
             start = time.perf_counter()
             try:
-                if global_index % 2 == 0:
-                    key = f"{key_prefix}:worker:{worker_id}:set:{global_index}"
-                    client.set_value(key, "load-value")
-                else:
+                slot = global_index % 6
+                if slot == 0:
+                    result = client.ping()
+                    if result != "PONG":
+                        raise RuntimeError(f"unexpected ping result: {result!r}")
+                elif slot == 1:
                     key = seed_keys[global_index % len(seed_keys)]
                     result = client.get_value(key)
                     if result is None:
                         raise RuntimeError(f"seed key {key!r} was not found")
+                elif slot == 2:
+                    last_set_key = f"{key_prefix}:worker:{worker_id}:set:{global_index}"
+                    client.set_value(last_set_key, "load-value")
+                elif slot == 3:
+                    key = seed_keys[global_index % len(seed_keys)]
+                    if not client.exists(key):
+                        raise RuntimeError(f"seed key {key!r} was not found for EXISTS")
+                elif slot == 4:
+                    key = seed_keys[global_index % len(seed_keys)]
+                    result = client.type_of(key)
+                    if result != "string":
+                        raise RuntimeError(
+                            f"unexpected TYPE result for seed key {key!r}: {result!r}"
+                        )
+                else:
+                    deleted = client.delete_value(last_set_key)
+                    if deleted != 1:
+                        raise RuntimeError(
+                            f"unexpected DEL result for worker key {last_set_key!r}: {deleted!r}"
+                        )
                 latencies_ms.append((time.perf_counter() - start) * 1000)
                 success_count += 1
             except Exception:

@@ -49,6 +49,10 @@ def _available_backends(report: dict[str, object]) -> dict[str, dict[str, object
     }
 
 
+def _backend_label(backend_name: str, backend_result: dict[str, object]) -> str:
+    return str(backend_result.get("label", backend_name.upper()))
+
+
 def _build_report_from_result_files(
     backend_name: str,
     latency_report: dict[str, object],
@@ -133,14 +137,14 @@ def _create_matplotlib_plots(
             average_values,
             width=width,
             color=COLORS[index % len(COLORS)],
-            label=backend_name.upper(),
+            label=_backend_label(backend_name, available[backend_name]),
         )
         axes[1].bar(
             bar_positions,
             p95_values,
             width=width,
             color=COLORS[index % len(COLORS)],
-            label=backend_name.upper(),
+            label=_backend_label(backend_name, available[backend_name]),
         )
 
     for axis, title in zip(axes, ["Average Latency (ms)", "P95 Latency (ms)"]):
@@ -166,14 +170,14 @@ def _create_matplotlib_plots(
             throughput_values,
             marker="o",
             color=COLORS[index % len(COLORS)],
-            label=backend_name.upper(),
+            label=_backend_label(backend_name, available[backend_name]),
         )
         axes[1].plot(
             concurrency_levels,
             p95_values,
             marker="o",
             color=COLORS[index % len(COLORS)],
-            label=backend_name.upper(),
+            label=_backend_label(backend_name, available[backend_name]),
         )
 
     axes[0].set_title("Throughput Under Load")
@@ -238,7 +242,7 @@ def _render_latency_svg(available: dict[str, dict[str, object]]) -> str:
     scale_max = max_value * 1.15 if max_value else 1.0
     return _render_two_panel_svg(
         title="Latency Summary",
-        legend_labels=list(available.keys()),
+        legend_labels=[_backend_label(name, result) for name, result in available.items()],
         left_panel=_render_bar_panel(
             title="Average Latency (ms)",
             y_label="milliseconds",
@@ -279,7 +283,7 @@ def _render_load_svg(available: dict[str, dict[str, object]]) -> str:
     latency_max = max(all_latency_values, default=1.0) * 1.15
     return _render_two_panel_svg(
         title="Load Summary",
-        legend_labels=list(available.keys()),
+        legend_labels=[_backend_label(name, result) for name, result in available.items()],
         left_panel=_render_line_panel(
             title="Throughput Under Load",
             y_label="requests/sec",

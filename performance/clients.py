@@ -52,7 +52,7 @@ def read_resp_frame(reader: BufferedReader) -> str | None:
 
 
 class RespBenchmarkClient:
-    def __init__(self, config: RespConfig, timeout_seconds: float = 3.0) -> None:
+    def __init__(self, config: RespConfig, timeout_seconds: float | None = None) -> None:
         self._connection = connect_miniredis(config, timeout_seconds=timeout_seconds)
 
     def __enter__(self) -> "RespBenchmarkClient":
@@ -60,6 +60,13 @@ class RespBenchmarkClient:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
+
+    def ping(self) -> str:
+        self._connection.sock.sendall(encode_resp_command("PING"))
+        response = read_resp_frame(self._connection.reader)
+        if response != "PONG":
+            raise RuntimeError(f"unexpected RESP PING response: {response!r}")
+        return str(response)
 
     def set_value(self, key: str, value: str) -> None:
         self._connection.sock.sendall(encode_resp_command("SET", key, value))
@@ -72,12 +79,33 @@ class RespBenchmarkClient:
         response = read_resp_frame(self._connection.reader)
         return None if response is None else str(response)
 
+    def delete_value(self, key: str) -> int:
+        self._connection.sock.sendall(encode_resp_command("DEL", key))
+        response = read_resp_frame(self._connection.reader)
+        if response not in {"0", "1"}:
+            raise RuntimeError(f"unexpected RESP DEL response: {response!r}")
+        return int(response)
+
+    def exists(self, key: str) -> bool:
+        self._connection.sock.sendall(encode_resp_command("EXISTS", key))
+        response = read_resp_frame(self._connection.reader)
+        if response not in {"0", "1"}:
+            raise RuntimeError(f"unexpected RESP EXISTS response: {response!r}")
+        return response == "1"
+
+    def type_of(self, key: str) -> str:
+        self._connection.sock.sendall(encode_resp_command("TYPE", key))
+        response = read_resp_frame(self._connection.reader)
+        if response not in {"string", "none"}:
+            raise RuntimeError(f"unexpected RESP TYPE response: {response!r}")
+        return str(response)
+
     def close(self) -> None:
         self._connection.close()
 
 
 class MongoBenchmarkClient:
-    def __init__(self, config: MongoConfig, timeout_ms: int = 3000) -> None:
+    def __init__(self, config: MongoConfig, timeout_ms: int | None = None) -> None:
         self._connection = connect_mongodb(config, timeout_ms=timeout_ms)
 
     def __enter__(self) -> "MongoBenchmarkClient":
@@ -85,6 +113,10 @@ class MongoBenchmarkClient:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
+
+    def ping(self) -> str:
+        self._connection.client.admin.command("ping")
+        return "PONG"
 
     def set_value(self, key: str, value: str) -> None:
         self._connection.collection.replace_one(
@@ -98,6 +130,17 @@ class MongoBenchmarkClient:
         if document is None:
             return None
         return str(document["value"])
+
+    def delete_value(self, key: str) -> int:
+        result = self._connection.collection.delete_one({"_id": key})
+        return int(result.deleted_count)
+
+    def exists(self, key: str) -> bool:
+        document = self._connection.collection.find_one({"_id": key}, {"_id": 1})
+        return document is not None
+
+    def type_of(self, key: str) -> str:
+        return "string" if self.exists(key) else "none"
 
     def close(self) -> None:
         self._connection.close()
