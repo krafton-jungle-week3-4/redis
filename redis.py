@@ -1,24 +1,27 @@
-"""mini-redis core entrypoint.
+﻿"""mini-redis core entrypoint.
 
 RESP 파싱이 끝난 명령 배열을 받아 `execute(command)`를 호출하면,
-command_router로 위임하고 약속된 응답 딕셔너리를 반환합니다.
+command_router로 위임하고 규격화된 응답 딕셔너리를 반환합니다.
 
 동시성 설계 포인트:
 - 모든 쓰기 명령은 단일 writer thread가 queue에서 순차 처리합니다.
-- 읽기 명령은 `store_lock` 아래에서 수행해 쓰기 중간 상태를 보지 않게 합니다.
+- 읽기 명령도 동일한 store_lock 아래에서 수행해, 쓰기 중간 상태를 보지 않게 합니다.
 - 복구 중에는 request gate를 통해 새 요청 진입을 막고,
-  복구 작업도 writer queue에서 처리해 기존 쓰기와 순서를 맞춥니다.
+  복구 작업 자체도 writer queue에서 처리해 기존 쓰기와 순서를 맞춥니다.
+- AOF replay도 같은 gate와 writer queue를 재사용해 snapshot/restore와 충돌하지 않게 합니다.
 - `PING`/`ECHO` 같은 stateless 명령만 lock 없이 바로 처리합니다.
 """
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Event, RLock, Thread
 from typing import Any, Literal, TypedDict
 
+from aof_manager import append_aof_command
 from command_router import STATELESS_COMMANDS, dispatch_command, get_wrong_arity_command
 from core_state import begin_loading, finish_loading, restore_state, store_lock, wait_until_ready
 from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
@@ -39,6 +42,7 @@ class WriteRequest:
 
     command: list[str] | None = None
     snapshot: dict[str, Any] | None = None
+    skip_aof: bool = False
     done: Event = field(default_factory=Event)
     result: RedisResponse | None = None
 
@@ -101,6 +105,9 @@ def _writer_loop() -> None:
                     request.result = _execute_restore_locked(request.snapshot)
                 elif request.command is not None:
                     request.result = _execute_command(request.command, purge_expired=True)
+                    # 성공한 쓰기만 AOF에 남겨야 재생 시 동일한 상태를 만들 수 있습니다.
+                    if not request.skip_aof and request.result["type"] != "error":
+                        append_aof_command(request.command)
                 else:
                     request.result = _error("ERR write request missing payload")
         finally:
@@ -108,8 +115,8 @@ def _writer_loop() -> None:
             write_queue.task_done()
 
 
-def _submit_write(command: list[str]) -> RedisResponse:
-    request = WriteRequest(command=command)
+def _submit_write(command: list[str], *, skip_aof: bool = False) -> RedisResponse:
+    request = WriteRequest(command=command, skip_aof=skip_aof)
     write_queue.put(request)
     request.done.wait()
     if request.result is None:
@@ -118,7 +125,7 @@ def _submit_write(command: list[str]) -> RedisResponse:
 
 
 def _submit_restore(snapshot: dict[str, Any]) -> RedisResponse:
-    request = WriteRequest(snapshot=snapshot)
+    request = WriteRequest(snapshot=snapshot, skip_aof=True)
     write_queue.put(request)
     request.done.wait()
     if request.result is None:
@@ -145,6 +152,26 @@ def restore_from_loader(loader: Callable[[], dict[str, Any]]) -> RedisResponse:
 
 def restore_from_snapshot_data(snapshot: dict[str, Any]) -> RedisResponse:
     return restore_from_loader(lambda: snapshot)
+
+
+def replay_from_aof_commands(commands: list[list[str]], delay_sec: float = 0.0) -> RedisResponse:
+    """AOF 명령 목록을 순서대로 다시 적용해 메모리 상태를 복구합니다."""
+    ensure_background_cleanup_started(lambda: store_lock)
+
+    with request_gate:
+        begin_loading()
+        try:
+            if delay_sec > 0:
+                time.sleep(delay_sec)
+
+            last_result: RedisResponse = {"type": "simple_string", "value": "OK"}
+            for command in commands:
+                last_result = _submit_write(command, skip_aof=True)
+                if last_result["type"] == "error":
+                    return last_result
+            return last_result
+        finally:
+            finish_loading()
 
 
 def execute(command: list[str]) -> RedisResponse:
