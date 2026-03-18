@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from core_state import key_type, string_value
 from error_contract import ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_STRING
 
 
@@ -55,11 +56,12 @@ def execute_string_command(
 
     if command_name == "GET":
         key = command[1]
-        if key in set_store or key in list_store or key in zset_store:
+        if key_type(key) not in {"none", "string"}:
             return {"type": "error", "value": ERR_WRONG_TYPE_STRING}
-        if key not in store:
+        value = string_value(key)
+        if value is None:
             return {"type": "null", "value": None}
-        return {"type": "bulk_string", "value": store[key]}
+        return {"type": "bulk_string", "value": value}
 
     if command_name == "INCR":
         key = command[1]
@@ -104,9 +106,9 @@ def execute_string_command(
     if command_name == "MGET":
         keys = command[1:]
         for key in keys:
-            if key in set_store or key in list_store or key in zset_store:
+            if key_type(key) not in {"none", "string"}:
                 return {"type": "error", "value": ERR_WRONG_TYPE_STRING}
-        values = [store.get(key) for key in keys]
+        values = [string_value(key) for key in keys]
         return {"type": "array", "value": values}
 
     return None
