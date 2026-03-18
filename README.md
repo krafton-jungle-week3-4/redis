@@ -53,15 +53,14 @@ Mini Redis는 Python으로 구현한 in-memory key-value 저장소입니다.
 - p50 / p95 / p99 지연 시간
 
 ## 4-1. 평균/P95 지연 시간 비교
-
-![네트워크 E2E Latency Summary](./docs/perf-latency-summary.jpg)
+<img width="1800" height="600" alt="network_e2e_latency_summary" src="https://github.com/user-attachments/assets/00dc3c00-9e0d-45e6-8e30-8be4113b2f5c" />
 
 - 이 그래프는 `PING`, `SET`, `GET`, `EXISTS`, `TYPE`, `DEL` 명령 기준으로 mini-redis와 MongoDB의 평균 지연 시간과 P95 지연 시간을 비교한 결과입니다.
 - 전 구간에서 mini-redis가 더 낮은 지연 시간을 보였고, 특히 `SET`, `GET` 같은 기본 명령에서 메모리 기반 저장소의 응답성이 더 안정적이라는 점을 확인할 수 있었습니다.
 
 ## 4-2. 부하 증가 시 처리량/지연 시간 비교
 
-![Network E2E Load Summary](./docs/perf-load-summary.jpg)
+<img width="1800" height="600" alt="network_e2e_load_summary" src="https://github.com/user-attachments/assets/cd1e2d8b-e870-4059-917e-b75201d04508" />
 
 - 이 그래프는 동시성(concurrency)이 증가할 때 처리량과 P95 지연 시간이 어떻게 변하는지 비교한 결과입니다.
 - mini-redis는 높은 처리량을 유지하면서도 지연 시간 증가 폭이 상대적으로 작았고, MongoDB는 부하가 커질수록 P95 지연 시간이 더 크게 증가하는 경향을 보였습니다.
