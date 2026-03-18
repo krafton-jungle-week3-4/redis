@@ -337,47 +337,66 @@ QA_CASES = [
         ],
         "존재하지 않는 멤버/리더보드 조회 시 예외 처리 확인",
     ),
-    static_case(
+    derived_case(
         "TC-INV-01",
         "삭제 후 조회 반영",
         "P2",
-        "partial",
-        "삭제 후 조회 반영은 검증되지만 별도 invalidation 레이어는 미구현",
+        [
+            "test_invalidation_layer.InvalidationLayerTests.test_delete_invalidates_cached_get_result",
+            "test_invalidation_layer.InvalidationLayerTests.test_type_read_is_refreshed_after_type_change",
+        ],
+        "삭제/타입 변경 후 캐시 무효화와 재조회 반영 검증 완료",
     ),
-    static_case(
+    derived_case(
         "TC-VER-01",
         "버전 전환",
         "P2",
-        "not_covered",
-        "Namespace 버전 전환 기능과 테스트가 없습니다",
+        [
+            "test_version_namespace.VersionNamespaceTests.test_switchver_isolates_keyspace_and_restores_previous_namespace",
+            "test_version_namespace.VersionNamespaceTests.test_switchver_separates_non_string_types_too",
+        ],
+        "Namespace 전환 시 keyspace 분리와 재전환 복원 확인",
     ),
-    static_case(
+    derived_case(
         "TC-REST-03",
         "Restore 정책",
         "P2",
-        "partial",
-        "현재 restore는 전체 교체 방식으로 동작하지만 Merge/Replace 정책 분기 테스트는 없습니다",
+        [
+            "test_restore_behavior.RestoreBehaviorTests.test_restore_replace_policy_replaces_existing_data",
+            "test_restore_behavior.RestoreBehaviorTests.test_restore_merge_policy_merges_snapshot_into_existing_data",
+        ],
+        "replace/merge restore 정책 분기 동작 검증 완료",
     ),
-    static_case(
+    derived_case(
         "TC-DUR-01",
         "장애 후 복구 (AOF)",
         "P2",
-        "not_covered",
-        "AOF 기반 내구성 기능과 테스트가 없습니다",
+        [
+            "test_aof_durability.AofDurabilityTests.test_aof_replay_recovers_data_after_cleared_state",
+            "test_aof_durability.AofDurabilityTests.test_write_requests_wait_until_aof_replay_completes",
+        ],
+        "AOF replay 기반 상태 복구와 복구 중 요청 대기 처리 확인",
     ),
-    static_case(
+    derived_case(
         "TC-PERF-01",
         "성능 벤치마크",
         "P2",
-        "not_covered",
-        "자동 QA 범위에 MongoDB 비교 성능 벤치마크가 포함되어 있지 않습니다",
+        [
+            "test_benchmark_reports.RunBenchmarksTests.test_core_profile_generates_only_core_execute",
+            "test_benchmark_reports.RunBenchmarksTests.test_network_profile_generates_only_network_e2e",
+            "test_benchmark_reports.RunBenchmarksTests.test_avg_ms_over_ping_is_shared_by_report_csv_and_plot",
+        ],
+        "벤치마크 리포트/CSV/플롯 산출물과 Mongo 비교 경로 검증 완료",
     ),
-    static_case(
+    derived_case(
         "TC-PERF-02",
         "Hot key 부하",
         "P2",
-        "not_covered",
-        "집중 부하 상황에 대한 별도 Hot key QA 테스트가 없습니다",
+        [
+            "test_hot_key_load.HotKeyLoadTests.test_hot_key_increments_keep_exact_total_under_heavy_contention",
+            "test_hot_key_load.HotKeyLoadTests.test_hot_key_reads_never_move_backward_while_writes_continue",
+        ],
+        "집중 부하 상황에서 최종 합계와 읽기 일관성 유지 확인",
     ),
     derived_case(
         "TC-ERR-01",

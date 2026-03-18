@@ -30,6 +30,56 @@ def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def expected_case_ids() -> list[str]:
+    try:
+        from scripts.run_qa_suite import QA_CASES
+    except ModuleNotFoundError:
+        from run_qa_suite import QA_CASES
+
+    return [case["id"] for case in QA_CASES]
+
+
+def validate_report(report: dict) -> None:
+    cases = report.get("cases")
+    if not isinstance(cases, list):
+        raise RuntimeError("QA report is missing a valid 'cases' list")
+
+    expected_ids = expected_case_ids()
+    expected_id_set = set(expected_ids)
+
+    seen_ids: list[str] = []
+    seen_id_set: set[str] = set()
+    duplicate_ids: list[str] = []
+    unexpected_ids: list[str] = []
+
+    for case in cases:
+        if not isinstance(case, dict) or not isinstance(case.get("id"), str):
+            raise RuntimeError("QA report contains a case without a valid string 'id'")
+        case_id = case["id"]
+        if case_id in seen_id_set and case_id not in duplicate_ids:
+            duplicate_ids.append(case_id)
+        seen_ids.append(case_id)
+        seen_id_set.add(case_id)
+        if case_id not in expected_id_set and case_id not in unexpected_ids:
+            unexpected_ids.append(case_id)
+
+    missing_ids = [case_id for case_id in expected_ids if case_id not in seen_id_set]
+    if missing_ids or duplicate_ids or unexpected_ids:
+        problems: list[str] = []
+        if missing_ids:
+            problems.append(f"missing={', '.join(missing_ids)}")
+        if duplicate_ids:
+            problems.append(f"duplicate={', '.join(duplicate_ids)}")
+        if unexpected_ids:
+            problems.append(f"unexpected={', '.join(unexpected_ids)}")
+        raise RuntimeError(f"QA report is incomplete or inconsistent: {'; '.join(problems)}")
+
+    if len(cases) != len(expected_ids):
+        raise RuntimeError(
+            f"QA report case count mismatch: expected {len(expected_ids)}, got {len(cases)}"
+        )
+
+
 def build_run_url() -> str | None:
     server_url = os.getenv("GITHUB_SERVER_URL")
     repository = os.getenv("GITHUB_REPOSITORY")
@@ -257,6 +307,7 @@ def main() -> int:
 
     report_path = Path(args.report_file)
     report = read_json(report_path)
+    validate_report(report)
 
     page_id = normalize_page_id(os.getenv("NOTION_PAGE_ID") or DEFAULT_NOTION_PAGE_ID)
     token = os.getenv("NOTION_TOKEN", "")
