@@ -1,3 +1,10 @@
+from error_contract import (
+    ERR_EMPTY_COMMAND,
+    err_unknown_command,
+    err_wrong_number_of_arguments,
+)
+
+
 def execute(command: list[str]) -> dict:
     """
     실제 redis.py가 아직 없을 때 서버 연결 흐름만 점검하기 위한 임시 execute 함수이다.
@@ -14,7 +21,7 @@ def execute(command: list[str]) -> dict:
     # parser 단계에서 이미 빈 명령은 막히지만, execute 쪽도 입력이 비정상이면
     # 어떤 문제가 생겼는지 바로 보이도록 에러 응답을 돌려준다.
     if not command:
-        return {"type": "error", "value": "empty command"}
+        return {"type": "error", "value": ERR_EMPTY_COMMAND}
 
     # 명령어는 parser에서 대문자로 정규화되지만,
     # 이 함수만 따로 호출될 수도 있어서 한 번 더 안전하게 처리한다.
@@ -29,9 +36,9 @@ def execute(command: list[str]) -> dict:
     # 인자 개수가 맞지 않으면 에러를 돌려준다.
     if name == "ECHO":
         if len(command) != 2:
-            return {"type": "error", "value": "wrong number of arguments"}
+            return {"type": "error", "value": err_wrong_number_of_arguments(name)}
         return {"type": "bulk_string", "value": command[1]}
 
     # 그 외 명령은 아직 임시 execute 범위 밖이므로,
     # "서버는 연결됐지만 코어 기능은 아직 구현 전"이라는 의미의 에러를 돌려준다.
-    return {"type": "error", "value": "mock execute supports only PING and ECHO"}
+    return {"type": "error", "value": err_unknown_command(command[0])}
