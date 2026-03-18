@@ -29,6 +29,17 @@ COMMON_FIXED_ARITY: dict[str, int] = {
     "PERSIST": 2,
 }
 
+STATELESS_COMMANDS = {"PING", "ECHO"}
+KEYED_COMMANDS = (
+    set(COMMON_FIXED_ARITY)
+    | set(STRING_FIXED_ARITY)
+    | set(SET_FIXED_ARITY)
+    | set(LIST_FIXED_ARITY)
+    | set(HASH_FIXED_ARITY)
+    | set(ZSET_FIXED_ARITY)
+    | {"MSET", "MGET", "SINTER", "SUNION"}
+) - STATELESS_COMMANDS
+
 
 def get_wrong_arity_command(command_name: str, command: list[str]) -> str | None:
     if command_name in {"SNAPSHOT", "DUMP"} and len(command) not in {1, 2}:

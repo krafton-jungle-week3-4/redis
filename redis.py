@@ -1,13 +1,14 @@
-﻿"""mini-redis core entrypoint.
+"""mini-redis core entrypoint.
 
-RESP 파싱이 끝난 명령 배열을 받아서,
-command_router로 위임하고 응답 딕셔너리를 반환합니다.
+RESP 파싱이 끝난 명령 배열을 받아 `execute(command)`를 호출하면,
+command_router로 위임하고 약속된 응답 딕셔너리를 반환합니다.
 
 동시성 설계 포인트:
 - 모든 쓰기 명령은 단일 writer thread가 queue에서 순차 처리합니다.
-- 읽기 명령도 동일한 store_lock 아래에서 수행해, 쓰기 중간 상태를 보지 않게 합니다.
+- 읽기 명령은 `store_lock` 아래에서 수행해 쓰기 중간 상태를 보지 않게 합니다.
 - 복구 중에는 request gate를 통해 새 요청 진입을 막고,
-  복구 작업 자체도 writer queue에서 처리해 기존 쓰기와 순서를 맞춥니다.
+  복구 작업도 writer queue에서 처리해 기존 쓰기와 순서를 맞춥니다.
+- `PING`/`ECHO` 같은 stateless 명령만 lock 없이 바로 처리합니다.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from queue import Queue
 from threading import Event, RLock, Thread
 from typing import Any, Literal, TypedDict
 
-from command_router import dispatch_command, get_wrong_arity_command
+from command_router import STATELESS_COMMANDS, dispatch_command, get_wrong_arity_command
 from core_state import begin_loading, finish_loading, restore_state, store_lock, wait_until_ready
 from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
 from snapshot_manager import begin_snapshot, finish_snapshot, write_snapshot_file
@@ -73,10 +74,11 @@ def _error(message: str) -> RedisResponse:
     return {"type": "error", "value": message}
 
 
-def _execute_locked(command: list[str]) -> RedisResponse:
-    purge_expired_keys()
-
+def _execute_command(command: list[str], *, purge_expired: bool) -> RedisResponse:
     command_name = command[0].upper()
+    if purge_expired:
+        purge_expired_keys()
+
     result = dispatch_command(command_name, command)
     if result is not None:
         return result
@@ -98,7 +100,7 @@ def _writer_loop() -> None:
                 if request.snapshot is not None:
                     request.result = _execute_restore_locked(request.snapshot)
                 elif request.command is not None:
-                    request.result = _execute_locked(request.command)
+                    request.result = _execute_command(request.command, purge_expired=True)
                 else:
                     request.result = _error("ERR write request missing payload")
         finally:
@@ -146,8 +148,6 @@ def restore_from_snapshot_data(snapshot: dict[str, Any]) -> RedisResponse:
 
 
 def execute(command: list[str]) -> RedisResponse:
-    ensure_background_cleanup_started(lambda: store_lock)
-
     with request_gate:
         wait_until_ready()
 
@@ -158,6 +158,11 @@ def execute(command: list[str]) -> RedisResponse:
         wrong_arity_command = get_wrong_arity_command(command_name, command)
         if wrong_arity_command is not None:
             return _error(err_wrong_number_of_arguments(wrong_arity_command))
+
+        if command_name in STATELESS_COMMANDS:
+            return _execute_command(command, purge_expired=False)
+
+        ensure_background_cleanup_started(lambda: store_lock)
 
         # Snapshot/Dump는 파일 I/O가 있으므로 store 복사 구간만 lock으로 보호하고,
         # 실제 파일 쓰기는 lock 밖에서 처리합니다.
@@ -177,5 +182,4 @@ def execute(command: list[str]) -> RedisResponse:
             return _submit_write(command)
 
         with store_lock:
-            return _execute_locked(command)
-
+            return _execute_command(command, purge_expired=True)
