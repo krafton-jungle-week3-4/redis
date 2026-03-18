@@ -7,7 +7,7 @@ from protocol_parser import ProtocolParseError, read_command
 from protocol_response import ProtocolResponseError, encode_response
 
 
-DEFAULT_HOST = "127.0.0.1"
+DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 6379
 
 

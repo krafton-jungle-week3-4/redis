@@ -3,10 +3,15 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 import math
+import random
 import statistics
 import time
 import uuid
 from typing import Callable, Protocol
+
+
+OPERATION_NAMES = ("ping", "set", "get", "exists", "type", "del")
+READ_OPERATION_NAMES = ("get", "exists", "type")
 
 
 class BenchmarkClient(Protocol):
@@ -21,6 +26,14 @@ class BenchmarkClient(Protocol):
 
 
 ClientFactory = Callable[[], BenchmarkClient]
+
+
+@dataclass(frozen=True)
+class OperationSpec:
+    name: str
+    key: str | None = None
+    value: str | None = None
+    expected: str | int | bool | None = None
 
 
 @dataclass(frozen=True)
@@ -85,148 +98,244 @@ def _distribute_work(total_requests: int, workers: int) -> list[int]:
     return assignments
 
 
+def _cleanup_keys(client_factory: ClientFactory, keys: list[str]) -> None:
+    unique_keys = list(dict.fromkeys(keys))
+    if not unique_keys:
+        return
+
+    try:
+        with client_factory() as client:
+            for key in unique_keys:
+                try:
+                    client.delete_value(key)
+                except Exception:
+                    # cleanup는 벤치마크 정확도 보조용이므로 실패해도 본 측정을 깨지 않는다.
+                    continue
+    except Exception:
+        return
+
+
+def _require_key(operation: OperationSpec) -> str:
+    if operation.key is None:
+        raise ValueError(f"{operation.name} requires a key")
+    return operation.key
+
+
+def _execute_operation(client: BenchmarkClient, operation: OperationSpec) -> str | int | bool | None:
+    if operation.name == "ping":
+        return client.ping()
+    if operation.name == "set":
+        key = _require_key(operation)
+        if operation.value is None:
+            raise ValueError("set requires a value")
+        client.set_value(key, operation.value)
+        return None
+    if operation.name == "get":
+        return client.get_value(_require_key(operation))
+    if operation.name == "exists":
+        return client.exists(_require_key(operation))
+    if operation.name == "type":
+        return client.type_of(_require_key(operation))
+    if operation.name == "del":
+        return client.delete_value(_require_key(operation))
+    raise ValueError(f"unsupported benchmark operation: {operation.name}")
+
+
+def _validate_operation_result(
+    backend_name: str,
+    operation: OperationSpec,
+    result: str | int | bool | None,
+) -> None:
+    if operation.expected is None:
+        return
+    if result != operation.expected:
+        raise RuntimeError(
+            f"{backend_name} returned an unexpected {operation.name.upper()} result "
+            f"for {operation.key!r}: {result!r}"
+        )
+
+
+def _build_latency_workload(
+    key_prefix: str,
+    iterations: int,
+    value: str,
+    random_seed: int,
+) -> tuple[list[OperationSpec], list[tuple[str, str]], list[str]]:
+    rng = random.Random(random_seed)
+    shuffled_names = [OPERATION_NAMES[index % len(OPERATION_NAMES)] for index in range(iterations * len(OPERATION_NAMES))]
+    rng.shuffle(shuffled_names)
+
+    read_keys = [f"{key_prefix}:read:{index}" for index in range(iterations)]
+    del_keys = [f"{key_prefix}:del:{index}" for index in range(iterations)]
+    counters = {name: 0 for name in OPERATION_NAMES}
+    operations: list[OperationSpec] = []
+    created_set_keys: list[str] = []
+
+    for name in shuffled_names:
+        if name == "ping":
+            operations.append(OperationSpec(name="ping", expected="PONG"))
+            continue
+
+        if name == "set":
+            set_index = counters["set"]
+            key = f"{key_prefix}:set:{set_index}"
+            counters["set"] += 1
+            created_set_keys.append(key)
+            operations.append(OperationSpec(name="set", key=key, value=value))
+            continue
+
+        if name in READ_OPERATION_NAMES:
+            read_index = counters[name]
+            key = read_keys[read_index]
+            counters[name] += 1
+            expected = value if name == "get" else True if name == "exists" else "string"
+            operations.append(OperationSpec(name=name, key=key, expected=expected))
+            continue
+
+        if name == "del":
+            del_index = counters["del"]
+            key = del_keys[del_index]
+            counters["del"] += 1
+            operations.append(OperationSpec(name="del", key=key, expected=1))
+            continue
+
+        raise ValueError(f"unsupported operation in latency workload: {name}")
+
+    preseed_pairs = [(key, value) for key in read_keys + del_keys]
+    cleanup_keys = read_keys + created_set_keys + del_keys
+    return operations, preseed_pairs, cleanup_keys
+
+
+def _build_load_workload(
+    key_prefix: str,
+    total_requests: int,
+    random_seed: int,
+) -> tuple[list[OperationSpec], list[tuple[str, str]], list[str]]:
+    rng = random.Random(random_seed)
+    shuffled_names = [OPERATION_NAMES[index % len(OPERATION_NAMES)] for index in range(total_requests)]
+    rng.shuffle(shuffled_names)
+
+    seed_key_count = max(64, total_requests // len(OPERATION_NAMES))
+    seed_keys = [f"{key_prefix}:seed:{index}" for index in range(seed_key_count)]
+    seed_values = {key: f"seed-value-{index}" for index, key in enumerate(seed_keys)}
+    del_key_count = shuffled_names.count("del")
+    del_keys = [f"{key_prefix}:del:{index}" for index in range(del_key_count)]
+
+    counters = {name: 0 for name in OPERATION_NAMES}
+    operations: list[OperationSpec] = []
+    created_set_keys: list[str] = []
+
+    for name in shuffled_names:
+        if name == "ping":
+            operations.append(OperationSpec(name="ping", expected="PONG"))
+            continue
+
+        if name == "set":
+            set_index = counters["set"]
+            key = f"{key_prefix}:set:{set_index}"
+            counters["set"] += 1
+            created_set_keys.append(key)
+            operations.append(OperationSpec(name="set", key=key, value="load-value"))
+            continue
+
+        if name == "get":
+            read_index = counters["get"]
+            key = seed_keys[read_index % len(seed_keys)]
+            counters["get"] += 1
+            operations.append(OperationSpec(name="get", key=key, expected=seed_values[key]))
+            continue
+
+        if name == "exists":
+            read_index = counters["exists"]
+            key = seed_keys[read_index % len(seed_keys)]
+            counters["exists"] += 1
+            operations.append(OperationSpec(name="exists", key=key, expected=True))
+            continue
+
+        if name == "type":
+            read_index = counters["type"]
+            key = seed_keys[read_index % len(seed_keys)]
+            counters["type"] += 1
+            operations.append(OperationSpec(name="type", key=key, expected="string"))
+            continue
+
+        if name == "del":
+            del_index = counters["del"]
+            key = del_keys[del_index]
+            counters["del"] += 1
+            operations.append(OperationSpec(name="del", key=key, expected=1))
+            continue
+
+        raise ValueError(f"unsupported operation in load workload: {name}")
+
+    preseed_pairs = [(key, seed_values[key]) for key in seed_keys] + [
+        (key, "load-value") for key in del_keys
+    ]
+    cleanup_keys = seed_keys + created_set_keys + del_keys
+    return operations, preseed_pairs, cleanup_keys
+
+
 def run_latency_benchmark(
     backend_name: str,
     client_factory: ClientFactory,
     iterations: int,
+    random_seed: int = 1729,
 ) -> dict[str, dict[str, float | int]]:
     if iterations <= 0:
         raise ValueError("iterations must be positive")
 
     value = "benchmark-value"
     key_prefix = f"perf:{backend_name}:latency:{uuid.uuid4().hex}"
-    ping_samples: list[float] = []
-    set_samples: list[float] = []
-    get_samples: list[float] = []
-    exists_samples: list[float] = []
-    type_samples: list[float] = []
-    del_samples: list[float] = []
+    samples = {name: [] for name in OPERATION_NAMES}
+    operations, preseed_pairs, cleanup_keys = _build_latency_workload(
+        key_prefix,
+        iterations,
+        value,
+        random_seed,
+    )
 
-    with client_factory() as client:
-        client.ping()
-        client.set_value(f"{key_prefix}:warmup", value)
-        client.get_value(f"{key_prefix}:warmup")
-        client.exists(f"{key_prefix}:warmup")
-        client.type_of(f"{key_prefix}:warmup")
-        client.delete_value(f"{key_prefix}:warmup")
+    try:
+        with client_factory() as client:
+            warmup_key = f"{key_prefix}:warmup"
+            client.ping()
+            client.set_value(warmup_key, value)
+            client.get_value(warmup_key)
+            client.exists(warmup_key)
+            client.type_of(warmup_key)
+            client.delete_value(warmup_key)
 
-        for _ in range(iterations):
-            start = time.perf_counter()
-            result = client.ping()
-            ping_samples.append((time.perf_counter() - start) * 1000)
-            if result != "PONG":
-                raise RuntimeError(
-                    f"{backend_name} returned an unexpected ping result: {result!r}"
-                )
+            for key, seed_value in preseed_pairs:
+                client.set_value(key, seed_value)
 
-        for index in range(iterations):
-            key = f"{key_prefix}:item:{index}"
-            start = time.perf_counter()
-            client.set_value(key, value)
-            set_samples.append((time.perf_counter() - start) * 1000)
-
-        for index in range(iterations):
-            key = f"{key_prefix}:item:{index}"
-            start = time.perf_counter()
-            result = client.get_value(key)
-            get_samples.append((time.perf_counter() - start) * 1000)
-            if result != value:
-                raise RuntimeError(
-                    f"{backend_name} returned an unexpected value for {key!r}: {result!r}"
-                )
-
-        for index in range(iterations):
-            key = f"{key_prefix}:item:{index}"
-            start = time.perf_counter()
-            result = client.exists(key)
-            exists_samples.append((time.perf_counter() - start) * 1000)
-            if not result:
-                raise RuntimeError(f"{backend_name} reported missing key for EXISTS: {key!r}")
-
-        for index in range(iterations):
-            key = f"{key_prefix}:item:{index}"
-            start = time.perf_counter()
-            result = client.type_of(key)
-            type_samples.append((time.perf_counter() - start) * 1000)
-            if result != "string":
-                raise RuntimeError(
-                    f"{backend_name} returned an unexpected TYPE for {key!r}: {result!r}"
-                )
-
-        for index in range(iterations):
-            key = f"{key_prefix}:delete:{index}"
-            client.set_value(key, value)
-
-        for index in range(iterations):
-            key = f"{key_prefix}:delete:{index}"
-            start = time.perf_counter()
-            deleted = client.delete_value(key)
-            del_samples.append((time.perf_counter() - start) * 1000)
-            if deleted != 1:
-                raise RuntimeError(
-                    f"{backend_name} returned an unexpected DEL result for {key!r}: {deleted!r}"
-                )
+            for operation in operations:
+                start = time.perf_counter()
+                result = _execute_operation(client, operation)
+                samples[operation.name].append((time.perf_counter() - start) * 1000)
+                _validate_operation_result(backend_name, operation, result)
+    finally:
+        _cleanup_keys(client_factory, cleanup_keys)
 
     return {
-        "ping": asdict(_summarize_latency(ping_samples)),
-        "set": asdict(_summarize_latency(set_samples)),
-        "get": asdict(_summarize_latency(get_samples)),
-        "exists": asdict(_summarize_latency(exists_samples)),
-        "type": asdict(_summarize_latency(type_samples)),
-        "del": asdict(_summarize_latency(del_samples)),
+        operation_name: asdict(_summarize_latency(samples[operation_name]))
+        for operation_name in OPERATION_NAMES
     }
 
 
 def _run_load_worker(
+    backend_name: str,
     client_factory: ClientFactory,
-    key_prefix: str,
-    seed_keys: list[str],
-    worker_id: int,
-    start_index: int,
-    request_count: int,
+    operations: list[OperationSpec],
 ) -> dict[str, object]:
     latencies_ms: list[float] = []
     success_count = 0
     error_count = 0
 
     with client_factory() as client:
-        last_set_key = f"{key_prefix}:worker:{worker_id}:bootstrap"
-        client.set_value(last_set_key, "bootstrap-value")
-
-        for offset in range(request_count):
-            global_index = start_index + offset
+        for operation in operations:
             start = time.perf_counter()
             try:
-                slot = global_index % 6
-                if slot == 0:
-                    result = client.ping()
-                    if result != "PONG":
-                        raise RuntimeError(f"unexpected ping result: {result!r}")
-                elif slot == 1:
-                    key = seed_keys[global_index % len(seed_keys)]
-                    result = client.get_value(key)
-                    if result is None:
-                        raise RuntimeError(f"seed key {key!r} was not found")
-                elif slot == 2:
-                    last_set_key = f"{key_prefix}:worker:{worker_id}:set:{global_index}"
-                    client.set_value(last_set_key, "load-value")
-                elif slot == 3:
-                    key = seed_keys[global_index % len(seed_keys)]
-                    if not client.exists(key):
-                        raise RuntimeError(f"seed key {key!r} was not found for EXISTS")
-                elif slot == 4:
-                    key = seed_keys[global_index % len(seed_keys)]
-                    result = client.type_of(key)
-                    if result != "string":
-                        raise RuntimeError(
-                            f"unexpected TYPE result for seed key {key!r}: {result!r}"
-                        )
-                else:
-                    deleted = client.delete_value(last_set_key)
-                    if deleted != 1:
-                        raise RuntimeError(
-                            f"unexpected DEL result for worker key {last_set_key!r}: {deleted!r}"
-                        )
+                result = _execute_operation(client, operation)
+                _validate_operation_result(backend_name, operation, result)
                 latencies_ms.append((time.perf_counter() - start) * 1000)
                 success_count += 1
             except Exception:
@@ -244,66 +353,74 @@ def run_load_benchmark(
     client_factory: ClientFactory,
     total_requests: int,
     concurrency_levels: tuple[int, ...],
+    random_seed: int = 1729,
 ) -> list[dict[str, float | int]]:
     if total_requests <= 0:
         raise ValueError("total_requests must be positive")
 
     key_prefix = f"perf:{backend_name}:load:{uuid.uuid4().hex}"
-    seed_keys = [f"{key_prefix}:seed:{index}" for index in range(max(64, total_requests // 4))]
-
-    with client_factory() as client:
-        for index, key in enumerate(seed_keys):
-            client.set_value(key, f"seed-value-{index}")
-
     load_results: list[dict[str, float | int]] = []
     for concurrency in concurrency_levels:
+        concurrency_prefix = f"{key_prefix}:c{concurrency}"
+        operations, preseed_pairs, cleanup_keys = _build_load_workload(
+            concurrency_prefix,
+            total_requests,
+            random_seed + concurrency,
+        )
         assignments = _distribute_work(total_requests, concurrency)
         worker_futures = []
-        overall_start = time.perf_counter()
+        operation_slices: list[list[OperationSpec]] = []
+        next_start_index = 0
+        for request_count in assignments:
+            operation_slices.append(operations[next_start_index : next_start_index + request_count])
+            next_start_index += request_count
 
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            next_start_index = 0
-            for worker_id, request_count in enumerate(assignments):
-                future = executor.submit(
-                    _run_load_worker,
-                    client_factory,
-                    key_prefix,
-                    seed_keys,
-                    worker_id,
-                    next_start_index,
-                    request_count,
-                )
-                worker_futures.append(future)
-                next_start_index += request_count
+        try:
+            with client_factory() as client:
+                for key, seed_value in preseed_pairs:
+                    client.set_value(key, seed_value)
 
-        elapsed_seconds = time.perf_counter() - overall_start
-        worker_results = [future.result() for future in worker_futures]
-        latencies = [
-            latency
-            for worker_result in worker_results
-            for latency in worker_result["latencies_ms"]
-        ]
-        success_count = sum(int(worker_result["success_count"]) for worker_result in worker_results)
-        error_count = sum(int(worker_result["error_count"]) for worker_result in worker_results)
-        latency_summary = _summarize_latency(latencies)
+            overall_start = time.perf_counter()
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                for operation_slice in operation_slices:
+                    future = executor.submit(
+                        _run_load_worker,
+                        backend_name,
+                        client_factory,
+                        operation_slice,
+                    )
+                    worker_futures.append(future)
 
-        load_results.append(
-            asdict(
-                LoadSummary(
-                    concurrency=concurrency,
-                    total_requests=total_requests,
-                    success_count=success_count,
-                    error_count=error_count,
-                    elapsed_seconds=round(elapsed_seconds, 6),
-                    throughput_rps=round(
-                        success_count / elapsed_seconds if elapsed_seconds else 0.0,
-                        6,
-                    ),
-                    avg_latency_ms=latency_summary.avg_ms,
-                    p95_latency_ms=latency_summary.p95_ms,
-                    p99_latency_ms=latency_summary.p99_ms,
+            elapsed_seconds = time.perf_counter() - overall_start
+            worker_results = [future.result() for future in worker_futures]
+            latencies = [
+                latency
+                for worker_result in worker_results
+                for latency in worker_result["latencies_ms"]
+            ]
+            success_count = sum(int(worker_result["success_count"]) for worker_result in worker_results)
+            error_count = sum(int(worker_result["error_count"]) for worker_result in worker_results)
+            latency_summary = _summarize_latency(latencies)
+
+            load_results.append(
+                asdict(
+                    LoadSummary(
+                        concurrency=concurrency,
+                        total_requests=total_requests,
+                        success_count=success_count,
+                        error_count=error_count,
+                        elapsed_seconds=round(elapsed_seconds, 6),
+                        throughput_rps=round(
+                            success_count / elapsed_seconds if elapsed_seconds else 0.0,
+                            6,
+                        ),
+                        avg_latency_ms=latency_summary.avg_ms,
+                        p95_latency_ms=latency_summary.p95_ms,
+                        p99_latency_ms=latency_summary.p99_ms,
+                    )
                 )
             )
-        )
+        finally:
+            _cleanup_keys(client_factory, cleanup_keys)
 
     return load_results

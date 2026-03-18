@@ -1,4 +1,5 @@
 import math
+import os
 import time
 from threading import Lock
 from typing import Any, Literal
@@ -776,3 +777,22 @@ def zrem_value(key: str, member: str) -> ZRemResponse:
 def zcard_value(key: str) -> ZCardResponse:
     values = get_zset_value(key)
     return ZCardResponse(key=key, count=0 if values is None else len(values))
+
+
+def _get_api_server_config() -> tuple[str, int]:
+    host = os.getenv("MINIREDIS_API_HOST", os.getenv("HOST", "0.0.0.0"))
+    port_text = os.getenv("MINIREDIS_API_PORT", os.getenv("PORT", "8000"))
+
+    try:
+        port = int(port_text)
+    except ValueError as exc:
+        raise RuntimeError("API port must be an integer.") from exc
+
+    return host, port
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    host, port = _get_api_server_config()
+    uvicorn.run(app, host=host, port=port)

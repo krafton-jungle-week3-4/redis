@@ -110,6 +110,38 @@ def _infer_filename_prefix(latency_json_path: Path, load_json_path: Path) -> str
     return ""
 
 
+def _latency_over_ping(backend_result: dict[str, object]) -> dict[str, dict[str, float | int]]:
+    if "latency_over_ping" in backend_result:
+        return backend_result["latency_over_ping"]
+
+    latency_result = backend_result["latency"]
+    ping_summary = latency_result["ping"]
+    adjusted: dict[str, dict[str, float | int]] = {}
+    for operation, summary in latency_result.items():
+        adjusted[operation] = {
+            "count": summary["count"],
+            "avg_ms": round(max(float(summary["avg_ms"]) - float(ping_summary["avg_ms"]), 0.0), 6),
+            "p50_ms": round(max(float(summary["p50_ms"]) - float(ping_summary["p50_ms"]), 0.0), 6),
+            "p95_ms": round(max(float(summary["p95_ms"]) - float(ping_summary["p95_ms"]), 0.0), 6),
+            "p99_ms": round(max(float(summary["p99_ms"]) - float(ping_summary["p99_ms"]), 0.0), 6),
+            "min_ms": round(max(float(summary["min_ms"]) - float(ping_summary["min_ms"]), 0.0), 6),
+            "max_ms": round(max(float(summary["max_ms"]) - float(ping_summary["max_ms"]), 0.0), 6),
+        }
+    return adjusted
+
+
+def _build_adjusted_available(
+    available: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    return {
+        backend_name: {
+            **backend_result,
+            "latency": _latency_over_ping(backend_result),
+        }
+        for backend_name, backend_result in available.items()
+    }
+
+
 def _create_matplotlib_plots(
     available: dict[str, dict[str, object]],
     output_dir: Path,
@@ -118,6 +150,7 @@ def _create_matplotlib_plots(
     import matplotlib.pyplot as plt
 
     latency_path = output_dir / f"{filename_prefix}latency_summary.png"
+    adjusted_latency_path = output_dir / f"{filename_prefix}latency_over_ping.png"
     load_path = output_dir / f"{filename_prefix}load_summary.png"
     backend_names = list(available.keys())
     operations = _ordered_operations(available)
@@ -158,6 +191,44 @@ def _create_matplotlib_plots(
     fig.savefig(latency_path, dpi=150)
     plt.close(fig)
 
+    adjusted_available = _build_adjusted_available(available)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    for index, backend_name in enumerate(backend_names):
+        latency_result = adjusted_available[backend_name]["latency"]
+        bar_positions = [
+            position - 0.4 + (width / 2) + (index * width) for position in x_positions
+        ]
+        average_values = [latency_result[operation]["avg_ms"] for operation in operations]
+        p95_values = [latency_result[operation]["p95_ms"] for operation in operations]
+        axes[0].bar(
+            bar_positions,
+            average_values,
+            width=width,
+            color=COLORS[index % len(COLORS)],
+            label=_backend_label(backend_name, adjusted_available[backend_name]),
+        )
+        axes[1].bar(
+            bar_positions,
+            p95_values,
+            width=width,
+            color=COLORS[index % len(COLORS)],
+            label=_backend_label(backend_name, adjusted_available[backend_name]),
+        )
+
+    for axis, title in zip(
+        axes,
+        ["Average Latency Over PING (ms)", "P95 Latency Over PING (ms)"],
+    ):
+        axis.set_xticks(x_positions)
+        axis.set_xticklabels([operation.upper() for operation in operations])
+        axis.set_title(title)
+        axis.set_ylabel("milliseconds")
+        axis.legend()
+
+    fig.tight_layout()
+    fig.savefig(adjusted_latency_path, dpi=150)
+    plt.close(fig)
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
     for index, backend_name in enumerate(backend_names):
         load_result = available[backend_name]["load"]
@@ -194,7 +265,7 @@ def _create_matplotlib_plots(
     fig.savefig(load_path, dpi=150)
     plt.close(fig)
 
-    return [latency_path, load_path]
+    return [latency_path, adjusted_latency_path, load_path]
 
 
 def _ordered_operations(available: dict[str, dict[str, object]]) -> list[str]:
@@ -212,13 +283,21 @@ def _create_svg_plots(
     filename_prefix: str,
 ) -> list[Path]:
     latency_path = output_dir / f"{filename_prefix}latency_summary.svg"
+    adjusted_latency_path = output_dir / f"{filename_prefix}latency_over_ping.svg"
     load_path = output_dir / f"{filename_prefix}load_summary.svg"
     latency_path.write_text(_render_latency_svg(available), encoding="utf-8")
+    adjusted_latency_path.write_text(
+        _render_latency_svg(_build_adjusted_available(available), title="Latency Over PING"),
+        encoding="utf-8",
+    )
     load_path.write_text(_render_load_svg(available), encoding="utf-8")
-    return [latency_path, load_path]
+    return [latency_path, adjusted_latency_path, load_path]
 
 
-def _render_latency_svg(available: dict[str, dict[str, object]]) -> str:
+def _render_latency_svg(
+    available: dict[str, dict[str, object]],
+    title: str = "Latency Summary",
+) -> str:
     operations = _ordered_operations(available)
     avg_series = [
         (
@@ -241,17 +320,17 @@ def _render_latency_svg(available: dict[str, dict[str, object]]) -> str:
     )
     scale_max = max_value * 1.15 if max_value else 1.0
     return _render_two_panel_svg(
-        title="Latency Summary",
+        title=title,
         legend_labels=[_backend_label(name, result) for name, result in available.items()],
         left_panel=_render_bar_panel(
-            title="Average Latency (ms)",
+            title="Average Latency (ms)" if title == "Latency Summary" else "Average Over PING (ms)",
             y_label="milliseconds",
             categories=[operation.upper() for operation in operations],
             series=avg_series,
             scale_max=scale_max,
         ),
         right_panel=_render_bar_panel(
-            title="P95 Latency (ms)",
+            title="P95 Latency (ms)" if title == "Latency Summary" else "P95 Over PING (ms)",
             y_label="milliseconds",
             categories=[operation.upper() for operation in operations],
             series=p95_series,

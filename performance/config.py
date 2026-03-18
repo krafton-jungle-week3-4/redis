@@ -47,6 +47,7 @@ class BenchmarkConfig:
     latency_iterations: int
     load_total_requests: int
     concurrency_levels: tuple[int, ...]
+    random_seed: int
     output_dir: Path
 
 
@@ -198,6 +199,7 @@ def load_config() -> tuple[RespConfig, MongoConfig, BenchmarkConfig]:
         concurrency_levels=_parse_concurrency_levels(
             os.getenv("PERF_CONCURRENCY_LEVELS", "1,4,8,16")
         ),
+        random_seed=int(os.getenv("PERF_RANDOM_SEED", "1729")),
         output_dir=output_dir,
     )
     return resp_config, mongo_config, benchmark_config

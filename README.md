@@ -29,10 +29,24 @@ performance/
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --reload
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-The server starts at `http://127.0.0.1:8000`.
+You can also start the API with:
+
+```bash
+python main.py
+```
+
+The API listens on `0.0.0.0:8000` by default, so local requests still work through `http://127.0.0.1:8000`.
+
+If you want to expose the RESP/TCP server on AWS, run:
+
+```bash
+MINIREDIS_HOST=0.0.0.0 MINIREDIS_PORT=6379 python server.py
+```
+
+On EC2, make sure the instance security group allows inbound traffic to the port you use (`8000` for the API, `6379` for the RESP server).
 
 ## API
 

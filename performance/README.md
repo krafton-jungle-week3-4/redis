@@ -13,6 +13,13 @@
 
 `ECHO`는 MongoDB에 의미 있는 대응 명령이 없어서 교차 백엔드 plot 비교에서는 제외합니다.
 
+측정 편향을 줄이기 위해 아래 규칙을 적용합니다.
+
+- latency/load 모두 연산 순서를 고정하지 않고 seed 기반으로 섞습니다
+- backend 간에는 같은 random seed로 같은 연산 mix를 사용합니다
+- benchmark가 끝나면 생성한 benchmark key를 정리합니다
+- 추가로 `PING` baseline을 뺀 보정 latency plot도 생성합니다
+
 ## 파일 구성
 
 - `test_performance.py`: 각 서버가 실제 요청을 받을 수 있는지 확인하는 smoke test
@@ -55,6 +62,7 @@ export MONGO_SOCKET_TIMEOUT_MS=30000
 export PERF_LATENCY_ITERATIONS=200
 export PERF_LOAD_TOTAL_REQUESTS=2000
 export PERF_CONCURRENCY_LEVELS=1,4,8,16
+export PERF_RANDOM_SEED=1729
 export PERF_OUTPUT_DIR=performance/results/aws-run
 ```
 
@@ -107,6 +115,7 @@ MONGO_COLLECTION_NAME=kv_store \
 PERF_LATENCY_ITERATIONS=200 \
 PERF_LOAD_TOTAL_REQUESTS=2000 \
 PERF_CONCURRENCY_LEVELS=1,4,8,16 \
+PERF_RANDOM_SEED=1729 \
 python -m performance.run_benchmarks
 ```
 
@@ -117,6 +126,8 @@ python -m performance.run_benchmarks
 - `benchmark_report.json`
 - `connection_summary.json`
 - `latency_summary.csv`
+- `latency_over_ping.csv`
 - `load_summary.csv`
 - `latency_summary.png`
+- `latency_over_ping.png`
 - `load_summary.png`

@@ -80,6 +80,45 @@ def _write_latency_csv(report: dict[str, object], output_dir: Path) -> Path:
     return file_path
 
 
+def _write_adjusted_latency_csv(report: dict[str, object], output_dir: Path) -> Path:
+    file_path = output_dir / "latency_over_ping.csv"
+    with file_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(
+            [
+                "backend",
+                "backend_label",
+                "operation",
+                "count",
+                "avg_ms_over_ping",
+                "p50_ms_over_ping",
+                "p95_ms_over_ping",
+                "p99_ms_over_ping",
+                "min_ms_over_ping",
+                "max_ms_over_ping",
+            ]
+        )
+        for backend_name, backend_result in report["backends"].items():
+            if "error" in backend_result:
+                continue
+            for operation, summary in backend_result["latency_over_ping"].items():
+                writer.writerow(
+                    [
+                        backend_name,
+                        backend_result.get("label", backend_name),
+                        operation,
+                        summary["count"],
+                        summary["avg_ms"],
+                        summary["p50_ms"],
+                        summary["p95_ms"],
+                        summary["p99_ms"],
+                        summary["min_ms"],
+                        summary["max_ms"],
+                    ]
+                )
+    return file_path
+
+
 def _write_load_csv(report: dict[str, object], output_dir: Path) -> Path:
     file_path = output_dir / "load_summary.csv"
     with file_path.open("w", newline="", encoding="utf-8") as csv_file:
@@ -119,6 +158,26 @@ def _write_load_csv(report: dict[str, object], output_dir: Path) -> Path:
                     ]
                 )
     return file_path
+
+
+def _build_latency_over_ping(
+    latency_result: dict[str, dict[str, float | int]],
+) -> dict[str, dict[str, float | int]]:
+    ping_summary = latency_result["ping"]
+    adjusted: dict[str, dict[str, float | int]] = {}
+
+    for operation, summary in latency_result.items():
+        adjusted[operation] = {
+            "count": summary["count"],
+            "avg_ms": round(max(float(summary["avg_ms"]) - float(ping_summary["avg_ms"]), 0.0), 6),
+            "p50_ms": round(max(float(summary["p50_ms"]) - float(ping_summary["p50_ms"]), 0.0), 6),
+            "p95_ms": round(max(float(summary["p95_ms"]) - float(ping_summary["p95_ms"]), 0.0), 6),
+            "p99_ms": round(max(float(summary["p99_ms"]) - float(ping_summary["p99_ms"]), 0.0), 6),
+            "min_ms": round(max(float(summary["min_ms"]) - float(ping_summary["min_ms"]), 0.0), 6),
+            "max_ms": round(max(float(summary["max_ms"]) - float(ping_summary["max_ms"]), 0.0), 6),
+        }
+
+    return adjusted
 
 
 def _write_connection_json(report: dict[str, object], output_dir: Path) -> Path:
@@ -178,6 +237,7 @@ def main() -> int:
                 "latency_iterations": benchmark_config.latency_iterations,
                 "load_total_requests": benchmark_config.load_total_requests,
                 "concurrency_levels": list(benchmark_config.concurrency_levels),
+                "random_seed": benchmark_config.random_seed,
                 "output_dir": str(benchmark_config.output_dir),
             },
         },
@@ -208,6 +268,7 @@ def main() -> int:
                 backend_name,
                 client_factory,
                 benchmark_config.latency_iterations,
+                random_seed=benchmark_config.random_seed,
             )
             print(f"Running {backend_name} load benchmark against {backend_label}...")
             load_result = run_load_benchmark(
@@ -215,11 +276,13 @@ def main() -> int:
                 client_factory,
                 benchmark_config.load_total_requests,
                 benchmark_config.concurrency_levels,
+                random_seed=benchmark_config.random_seed,
             )
             report["backends"][backend_name] = {
                 "label": backend_label,
                 "preflight": preflight_result,
                 "latency": latency_result,
+                "latency_over_ping": _build_latency_over_ping(latency_result),
                 "load": load_result,
             }
         except Exception as exc:
@@ -236,6 +299,7 @@ def main() -> int:
 
     connection_json_path = _write_connection_json(report, benchmark_config.output_dir)
     latency_csv_path = _write_latency_csv(report, benchmark_config.output_dir)
+    adjusted_latency_csv_path = _write_adjusted_latency_csv(report, benchmark_config.output_dir)
     load_csv_path = _write_load_csv(report, benchmark_config.output_dir)
 
     try:
@@ -247,6 +311,7 @@ def main() -> int:
     print(f"Report written to {json_path}")
     print(f"Connection summary written to {connection_json_path}")
     print(f"Latency CSV written to {latency_csv_path}")
+    print(f"Latency-over-ping CSV written to {adjusted_latency_csv_path}")
     print(f"Load CSV written to {load_csv_path}")
     for plot_path in plot_paths:
         print(f"Plot written to {plot_path}")
