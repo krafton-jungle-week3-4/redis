@@ -55,112 +55,40 @@ def static_case(case_id: str, title: str, priority: str, status: str, detail: st
 
 QA_CASES = [
     derived_case(
+        "TC-CONC-01",
+        "INCR 직렬화",
+        "P0",
+        [
+            "test_single_writer_concurrency.SingleWriterConcurrencyTests.test_incr_is_serialized_across_many_threads",
+        ],
+        "다중 스레드 INCR 요청이 손실 없이 직렬 처리됨을 확인",
+    ),
+    derived_case(
+        "TC-CONC-02",
+        "HINCRBY 직렬화",
+        "P0",
+        [
+            "test_single_writer_concurrency.SingleWriterConcurrencyTests.test_hincrby_is_serialized_across_many_threads",
+        ],
+        "다중 스레드 HINCRBY 요청이 필드 값 손실 없이 누적됨을 확인",
+    ),
+    derived_case(
         "TC-ZSET-01",
         "동일 멤버 동시 증가",
         "P0",
         [
-            "zsets.test_zset_api.ZSetApiTests.test_zincrby_is_atomic_with_large_concurrent_same_member_updates",
             "test_single_writer_concurrency.SingleWriterConcurrencyTests.test_zincrby_is_serialized_across_many_threads",
         ],
-        "동시성 제어 및 점수 합산 검증 완료",
+        "동시성 제어 아래 동일 멤버 점수 누적이 정확함을 확인",
     ),
     derived_case(
         "TC-ZSET-02",
         "다중 멤버 갱신",
         "P0",
         [
-            "zsets.test_zset_api.ZSetApiTests.test_concurrent_multi_member_updates_keep_expected_totals",
             "test_single_writer_concurrency.SingleWriterConcurrencyTests.test_random_multi_member_updates_preserve_total_sum",
         ],
-        "여러 멤버 랜덤 갱신 및 합계 정합성 확인",
-    ),
-    derived_case(
-        "TC-ZSET-03",
-        "쓰기 후 읽기",
-        "P0",
-        [
-            "zsets.test_zset_api.ZSetApiTests.test_write_then_read_never_returns_stale_score",
-        ],
-        "갱신 직후 읽기에서 stale score가 없음을 확인",
-    ),
-    derived_case(
-        "TC-ZSET-04",
-        "실시간 반영",
-        "P0",
-        [
-            "zsets.test_zset_api.ZSetApiTests.test_zincrby_updates_score_and_zrem_removes_member",
-            "zsets.test_zset_api.ZSetApiTests.test_zrank_zrevrank_and_zrange_ordering",
-        ],
-        "점수 갱신 후 즉시 score/rank 결과 반영 확인",
-    ),
-    derived_case(
-        "TC-ZSET-05",
-        "동점 처리",
-        "P0",
-        [
-            "zsets.test_zset_api.ZSetApiTests.test_zset_uses_earlier_update_order_for_score_ties",
-        ],
-        "업데이트 순서를 기준으로 한 동점 정렬 로직 검증 완료",
-    ),
-    derived_case(
-        "TC-ZSET-06",
-        "완전 동점",
-        "P0",
-        [
-            "zsets.test_zset_api.ZSetApiTests.test_zset_tie_order_is_deterministic_across_repeated_reads",
-        ],
-        "완전 동점 상황에서도 결과가 결정적으로 유지됨을 확인",
-    ),
-    derived_case(
-        "TC-TTL-01",
-        "Lazy expiration",
-        "P0",
-        [
-            "strings.test_string_state_commands.StringStateCommandTests.test_expired_string_key_behaves_like_missing_key",
-        ],
-        "대기 후 조회 시 null, ttl=-2, exists=0 확인",
-    ),
-    derived_case(
-        "TC-TTL-02",
-        "Background cleanup",
-        "P0",
-        [
-            "strings.test_string_state_commands.StringStateCommandTests.test_background_cleanup_removes_expired_key_without_read",
-            "zsets.test_zset_api.ZSetApiTests.test_cleanup_expired_keys_removes_expired_zset_and_auxiliary_ordering_state",
-        ],
-        "주기적 만료 정리와 보조 정렬 상태 제거까지 검증 완료",
-    ),
-    derived_case(
-        "TC-TTL-03",
-        "PERSIST",
-        "P0",
-        [
-            "strings.test_string_state_commands.StringStateCommandTests.test_expire_ttl_and_persist_for_string_key",
-            "strings.test_string_state_commands.StringStateCommandTests.test_persist_missing_key_returns_zero",
-        ],
-        "TTL 제거 및 영구 저장 전환 확인",
-    ),
-    derived_case(
-        "TC-TTL-04",
-        "TTL 값",
-        "P0",
-        [
-            "strings.test_string_state_commands.StringStateCommandTests.test_ttl_missing_key_returns_negative_two",
-            "strings.test_string_state_commands.StringStateCommandTests.test_set_clears_existing_ttl",
-        ],
-        "-1(무한), -2(만료/없음) 상태 값 정확성 확인",
-    ),
-    derived_case(
-        "TC-TYPE-01",
-        "타입 충돌",
-        "P0",
-        [
-            "lists.test_list_api.ListApiTests.test_list_wrong_type_returns_error",
-            "sets.test_set_api.SetApiTests.test_set_wrong_type_returns_error",
-            "hashes.test_hash_api.HashApiTests.test_hash_wrong_type_returns_error",
-            "zsets.test_zset_api.ZSetApiTests.test_zset_wrong_type_returns_error",
-        ],
-        "자료형 간 교차 호출 시 wrong type 에러 처리 확인",
+        "여러 멤버 랜덤 갱신 이후 총합과 랭킹 결과 정합성을 확인",
     ),
     derived_case(
         "TC-RESP-01",
@@ -169,7 +97,7 @@ QA_CASES = [
         [
             "protocol.test_server_protocol.ServerProtocolTests.test_malformed_resp_returns_error_and_connection_stays_alive",
         ],
-        "잘못된 프로토콜 입력 시 서버 생존 및 에러 반환 확인",
+        "잘못된 프로토콜 입력 시 서버 생존과 에러 반환을 확인",
     ),
     derived_case(
         "TC-SNAP-01",
@@ -189,7 +117,7 @@ QA_CASES = [
             "snapshot.test_snapshot_core.SnapshotCoreTests.test_snapshot_during_writes_produces_valid_dump",
             "snapshot.test_snapshot_core.SnapshotCoreTests.test_snapshot_is_stable_after_following_writes",
         ],
-        "쓰기 중 snapshot 유효성 및 dump 시점 고정성 검증 완료",
+        "쓰기 중 snapshot 유효성과 dump 시점 고정성 검증 완료",
     ),
     derived_case(
         "TC-REST-01",
@@ -210,7 +138,7 @@ QA_CASES = [
         "복구 중 쓰기 요청 대기 후 정상 처리 확인",
     ),
     derived_case(
-        "TC-CONC-01",
+        "TC-CONC-03",
         "종료 경쟁",
         "P0",
         [
@@ -220,127 +148,9 @@ QA_CASES = [
         "시즌 종료 시점 경쟁 처리와 종료 이후 쓰기 차단 검증 완료",
     ),
     derived_case(
-        "TC-STR-01",
-        "SET / GET / DEL",
-        "P1",
-        [
-            "strings.test_string_crud_commands.StringCrudCommandTests.test_set_and_get_string_value",
-            "strings.test_string_crud_commands.StringCrudCommandTests.test_delete_existing_and_missing_key",
-            "strings.test_string_crud_commands.StringCrudCommandTests.test_get_missing_key_returns_none",
-        ],
-        "기본 String 입출력 및 삭제 확인",
-    ),
-    derived_case(
-        "TC-STR-02",
-        "INCR / INCR 에러",
-        "P1",
-        [
-            "strings.test_string_numeric_commands.StringNumericCommandTests.test_increment_missing_key_creates_integer_string",
-            "strings.test_string_numeric_commands.StringNumericCommandTests.test_increment_existing_integer_string",
-            "strings.test_string_numeric_commands.StringNumericCommandTests.test_increment_non_integer_value_returns_http_400",
-            "strings.test_string_numeric_commands.StringNumericCommandTests.test_decrement_missing_key_creates_negative_integer_string",
-            "strings.test_string_numeric_commands.StringNumericCommandTests.test_decrement_existing_integer_string",
-            "strings.test_string_numeric_commands.StringNumericCommandTests.test_decrement_non_integer_value_returns_http_400",
-        ],
-        "INCR/DECR 정수 연산 및 예외 처리 확인",
-    ),
-    derived_case(
-        "TC-STR-03",
-        "MSET / MGET",
-        "P1",
-        [
-            "strings.test_string_batch_commands.StringBatchCommandTests.test_mset_and_mget_cover_existing_and_missing_keys",
-            "strings.test_string_batch_commands.StringBatchCommandTests.test_mset_rejects_empty_key_before_writing_anything",
-        ],
-        "다중 키 동시 처리와 전체 롤백 동작 확인",
-    ),
-    derived_case(
-        "TC-TTL-05",
-        "TTL 경계",
-        "P1",
-        [
-            "strings.test_string_state_commands.StringStateCommandTests.test_expire_zero_removes_key_immediately",
-            "strings.test_string_state_commands.StringStateCommandTests.test_expire_negative_ttl_returns_http_400",
-        ],
-        "0 또는 음수 TTL 입력 경계 조건 처리 확인",
-    ),
-    derived_case(
-        "TC-TTL-06",
-        "TTL 갱신",
-        "P1",
-        [
-            "strings.test_string_state_commands.StringStateCommandTests.test_last_expire_call_wins",
-            "strings.test_string_batch_commands.StringBatchCommandTests.test_mset_clears_existing_ttl_for_updated_keys",
-        ],
-        "반복 호출 시 최신 TTL 덮어쓰기와 값 갱신 시 TTL 제거 확인",
-    ),
-    derived_case(
-        "TC-LIST-01",
-        "Push / Pop",
-        "P1",
-        [
-            "lists.test_list_api.ListApiTests.test_push_preserves_order_and_type",
-            "lists.test_list_api.ListApiTests.test_lpop_and_rpop_remove_values_from_both_sides",
-            "lists.test_list_api.ListApiTests.test_pop_on_single_item_list_leaves_length_zero",
-        ],
-        "List 좌우 푸시 및 팝 동작 확인",
-    ),
-    derived_case(
-        "TC-LIST-02",
-        "Index / Range",
-        "P1",
-        [
-            "lists.test_list_api.ListApiTests.test_lrange_supports_negative_indices",
-            "lists.test_list_api.ListApiTests.test_lrange_returns_partial_slice_when_stop_exceeds_length",
-            "lists.test_list_api.ListApiTests.test_lindex_returns_null_when_index_is_out_of_range",
-        ],
-        "음수 인덱스와 범위 초과 처리 확인",
-    ),
-    derived_case(
-        "TC-RANK-01",
-        "Rank / Range",
-        "P1",
-        [
-            "zsets.test_zset_api.ZSetApiTests.test_zrank_zrevrank_and_zrange_ordering",
-            "zsets.test_zset_api.ZSetApiTests.test_zadd_zscore_zcard_and_type",
-        ],
-        "Sorted Set 순위 및 범위 조회 확인",
-    ),
-    derived_case(
-        "TC-RANK-02",
-        "Pagination",
-        "P1",
-        [
-            "zsets.test_zset_api.ZSetApiTests.test_zrange_supports_page_and_limit_pagination",
-            "zsets.test_zset_api.ZSetApiTests.test_zrange_rejects_invalid_pagination_inputs",
-        ],
-        "page/limit 기반 pagination 시나리오 확인",
-    ),
-    derived_case(
-        "TC-RANK-03",
-        "Around (내 주변)",
-        "P1",
-        [
-            "zsets.test_zset_api.ZSetApiTests.test_zaround_returns_neighbors_without_boundary_errors",
-            "zsets.test_zset_api.ZSetApiTests.test_zaround_rejects_negative_radius",
-        ],
-        "특정 멤버 기준 주변 랭킹 조회 확인",
-    ),
-    derived_case(
-        "TC-RANK-04",
-        "없는 Member",
-        "P1",
-        [
-            "zsets.test_zset_api.ZSetApiTests.test_zaround_returns_empty_for_missing_member",
-            "zsets.test_zset_api.ZSetApiTests.test_zscore_and_rank_return_null_for_missing_member",
-            "zsets.test_zset_api.ZSetApiTests.test_missing_leaderboard_queries_return_empty_results",
-        ],
-        "존재하지 않는 멤버/리더보드 조회 시 예외 처리 확인",
-    ),
-    derived_case(
         "TC-INV-01",
         "삭제 후 조회 반영",
-        "P2",
+        "P1",
         [
             "test_invalidation_layer.InvalidationLayerTests.test_delete_invalidates_cached_get_result",
             "test_invalidation_layer.InvalidationLayerTests.test_type_read_is_refreshed_after_type_change",
@@ -350,7 +160,7 @@ QA_CASES = [
     derived_case(
         "TC-VER-01",
         "버전 전환",
-        "P2",
+        "P1",
         [
             "test_version_namespace.VersionNamespaceTests.test_switchver_isolates_keyspace_and_restores_previous_namespace",
             "test_version_namespace.VersionNamespaceTests.test_switchver_separates_non_string_types_too",
@@ -360,7 +170,7 @@ QA_CASES = [
     derived_case(
         "TC-REST-03",
         "Restore 정책",
-        "P2",
+        "P1",
         [
             "test_restore_behavior.RestoreBehaviorTests.test_restore_replace_policy_replaces_existing_data",
             "test_restore_behavior.RestoreBehaviorTests.test_restore_merge_policy_merges_snapshot_into_existing_data",
@@ -370,7 +180,7 @@ QA_CASES = [
     derived_case(
         "TC-DUR-01",
         "장애 후 복구 (AOF)",
-        "P2",
+        "P1",
         [
             "test_aof_durability.AofDurabilityTests.test_aof_replay_recovers_data_after_cleared_state",
             "test_aof_durability.AofDurabilityTests.test_write_requests_wait_until_aof_replay_completes",
@@ -399,13 +209,22 @@ QA_CASES = [
         "집중 부하 상황에서 최종 합계와 읽기 일관성 유지 확인",
     ),
     derived_case(
+        "TC-CORE-01",
+        "Stateless core 명령",
+        "P2",
+        [
+            "test_core_stateless_commands.CoreStatelessCommandTests.test_ping_returns_pong",
+        ],
+        "PING 명령이 core 경로에서 직접 PONG을 반환함을 확인",
+    ),
+    derived_case(
         "TC-ERR-01",
         "내부 예외 처리",
         "P2",
         [
             "protocol.test_server_protocol.ServerProtocolTests.test_internal_execute_exception_returns_error_and_next_command_still_works",
         ],
-        "내부 예외 발생 시 서버 유지 및 후속 명령 처리 확인",
+        "내부 예외 발생 시 서버 유지와 후속 명령 처리 확인",
     ),
 ]
 

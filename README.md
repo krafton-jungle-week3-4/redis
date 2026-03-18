@@ -20,7 +20,6 @@ Mini Redis는 Python으로 구현한 in-memory key-value 저장소입니다.
 ## 3. 기술 스택
 
 - Python
-- FastAPI
 - RESP 스타일 TCP 서버
 - In-memory hash-table 기반 저장 구조
 - MongoDB 비교 벤치마크
@@ -29,7 +28,6 @@ Mini Redis는 Python으로 구현한 in-memory key-value 저장소입니다.
 ## 4. 전체 구조
 
 ```text
-main.py              # FastAPI 진입점
 server.py            # RESP/TCP 서버
 redis.py             # 명령 실행 진입점 + 동시성 제어
 command_router.py    # 명령 분기
@@ -109,10 +107,7 @@ tests/               # 테스트
 
 ## 7. 외부 사용 방식
 
-이 프로젝트는 두 방식으로 사용할 수 있습니다.
-
-- **FastAPI**: HTTP 기반 확인 및 기능 테스트
-- **RESP 스타일 TCP 서버**: Redis와 비슷한 명령 흐름 확인
+이 프로젝트는 RESP 스타일 TCP 서버를 통해 Redis와 비슷한 명령 흐름을 확인할 수 있습니다.
 
 ## 8. 테스트와 검증
 
@@ -157,12 +152,6 @@ tests/               # 테스트
 또한 AI를 활용해 구현 속도를 높일 수 있어도, 핵심 로직은 반드시 사람이 이해하고 검증해야 한다는 점을 다시 확인했습니다.
 
 ## 12. 실행 방법
-
-### FastAPI 서버
-
-```bash
-uvicorn main:app --reload
-```
 
 ### RESP 서버
 

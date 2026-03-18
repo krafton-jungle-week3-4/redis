@@ -1,8 +1,9 @@
+import unittest
 from io import BytesIO
 
+from core_state import clear_all_stores
 from error_contract import ERR_INTERNAL_SERVER
 from server import handle_client_connection
-from tests.base import StoreIsolationTestCase
 
 
 class FakeSocket:
@@ -21,7 +22,10 @@ class FakeSocket:
         self.closed = True
 
 
-class ServerProtocolTests(StoreIsolationTestCase):
+class ServerProtocolTests(unittest.TestCase):
+    def setUp(self) -> None:
+        clear_all_stores()
+
     def test_malformed_resp_returns_error_and_connection_stays_alive(self) -> None:
         fake_socket = FakeSocket(b"*1\r\n$-1\r\nPING\n")
 
