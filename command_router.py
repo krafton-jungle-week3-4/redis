@@ -1,4 +1,4 @@
-"""Command validation and dispatch pipeline for redis core."""
+﻿"""Command validation and dispatch pipeline for redis core."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from core_commands.strings import (
 )
 from core_commands.zsets import FIXED_ARITY as ZSET_FIXED_ARITY, execute_zset_command
 from core_state import hash_store, list_store, set_store, string_store, zset_store
+from season_manager import FIXED_ARITY as SEASON_FIXED_ARITY, execute_season_command
 from ttl_manager import clear_ttl_on_write, handle_ttl_command
 
 COMMON_FIXED_ARITY: dict[str, int] = {
@@ -33,6 +34,8 @@ def get_wrong_arity_command(command_name: str, command: list[str]) -> str | None
     if command_name in {"SNAPSHOT", "DUMP"} and len(command) not in {1, 2}:
         return command_name
     if command_name in COMMON_FIXED_ARITY and len(command) != COMMON_FIXED_ARITY[command_name]:
+        return command_name
+    if command_name in SEASON_FIXED_ARITY and len(command) != SEASON_FIXED_ARITY[command_name]:
         return command_name
     if command_name in STRING_FIXED_ARITY and len(command) != STRING_FIXED_ARITY[command_name]:
         return command_name
@@ -59,6 +62,10 @@ def dispatch_command(command_name: str, command: list[str]) -> dict | None:
     ttl_result = handle_ttl_command(command_name, command)
     if ttl_result is not None:
         return ttl_result
+
+    season_result = execute_season_command(command_name, command)
+    if season_result is not None:
+        return season_result
 
     clear_ttl_on_write(command_name, command)
 

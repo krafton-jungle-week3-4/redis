@@ -1,8 +1,10 @@
-"""Sorted-set(ZSET) command handlers for redis.py core."""
+﻿"""Sorted-set(ZSET) command handlers for redis.py core."""
 
 from typing import Any
 
+from core_state import archived_zset_store, closed_zset_keys
 from error_contract import ERR_VALUE_NOT_FLOAT, ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_ZSET
+from season_manager import reject_if_closed_leaderboard
 from snapshot_manager import prepare_mutable_write
 
 
@@ -35,6 +37,13 @@ def _parse_int(value: str) -> int | None:
 
 def _format_score(score: float) -> str:
     return format(score, "g")
+
+
+def _lookup_scores(key: str, zset_store: dict[str, dict[str, float]]) -> dict[str, float] | None:
+    scores = zset_store.get(key)
+    if scores is not None:
+        return scores
+    return archived_zset_store.get(key)
 
 
 def _ordered_members(scores: dict[str, float], reverse: bool = False) -> list[str]:
@@ -72,6 +81,11 @@ def execute_zset_command(
     ):
         return {"type": "error", "value": ERR_WRONG_TYPE_ZSET}
 
+    if command_name in {"ZADD", "ZINCRBY", "ZREM"}:
+        closed_error = reject_if_closed_leaderboard(key)
+        if closed_error is not None:
+            return closed_error
+
     if command_name == "ZADD":
         score = _parse_float(command[2])
         if score is None:
@@ -85,7 +99,7 @@ def execute_zset_command(
         return {"type": "integer", "value": added}
 
     if command_name == "ZSCORE":
-        scores = zset_store.get(key)
+        scores = _lookup_scores(key, zset_store)
         if scores is None:
             return {"type": "null", "value": None}
         member = command[2]
@@ -94,7 +108,7 @@ def execute_zset_command(
         return {"type": "bulk_string", "value": _format_score(scores[member])}
 
     if command_name == "ZRANK":
-        scores = zset_store.get(key)
+        scores = _lookup_scores(key, zset_store)
         if scores is None:
             return {"type": "null", "value": None}
         member = command[2]
@@ -104,7 +118,7 @@ def execute_zset_command(
         return {"type": "integer", "value": ordered.index(member)}
 
     if command_name == "ZREVRANK":
-        scores = zset_store.get(key)
+        scores = _lookup_scores(key, zset_store)
         if scores is None:
             return {"type": "null", "value": None}
         member = command[2]
@@ -114,7 +128,7 @@ def execute_zset_command(
         return {"type": "integer", "value": ordered.index(member)}
 
     if command_name == "ZRANGE":
-        scores = zset_store.get(key)
+        scores = _lookup_scores(key, zset_store)
         if scores is None:
             return {"type": "array", "value": []}
         start = _parse_int(command[2])
@@ -126,7 +140,7 @@ def execute_zset_command(
         return {"type": "array", "value": ordered[slice_start:slice_end]}
 
     if command_name == "ZREVRANGE":
-        scores = zset_store.get(key)
+        scores = _lookup_scores(key, zset_store)
         if scores is None:
             return {"type": "array", "value": []}
         start = _parse_int(command[2])
@@ -167,7 +181,7 @@ def execute_zset_command(
         return {"type": "integer", "value": 1}
 
     if command_name == "ZCARD":
-        scores = zset_store.get(key)
+        scores = _lookup_scores(key, zset_store)
         return {"type": "integer", "value": 0 if scores is None else len(scores)}
 
     return None
