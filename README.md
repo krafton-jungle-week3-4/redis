@@ -39,7 +39,19 @@ Mini Redis는 Python으로 구현한 in-memory key-value 저장소입니다.
 6. **추가 데모: Snapshot 복구 중 요청 처리**
    - `test_06_write_requests_wait_until_restore_completes`
 
-## 4. 기술 스택
+## 4. 성능 비교
+
+`performance/` 폴더에서 mini-redis와 MongoDB를 비교하는 벤치마크를 구성했습니다.
+
+비교 항목은 다음과 같습니다.
+
+- 응답 속도
+- 처리량(RPS)
+- p50 / p95 / p99 지연 시간
+
+## 4-1. 성능 그래프 시각자료
+
+## 5. 기술 스택
 
 - Python
 - RESP 스타일 TCP 서버
@@ -47,7 +59,7 @@ Mini Redis는 Python으로 구현한 in-memory key-value 저장소입니다.
 - MongoDB 비교 벤치마크
 - unittest
 
-## 5. 전체 구조
+## 6. 전체 구조
 
 ```text
 server.py            # RESP/TCP 서버 엔트리포인트
@@ -59,7 +71,7 @@ performance/         # 성능 비교
 tests/               # 테스트
 ```
 
-## 6. 구현한 기능
+## 7. 구현한 기능
 
 ### String
 - `SET`, `GET`, `DEL`
@@ -89,27 +101,27 @@ tests/               # 테스트
 - `ZRANGE`, `ZREVRANGE`
 - `ZINCRBY`, `ZREM`, `ZCARD`
 
-## 7. 핵심 설계 포인트
+## 8. 핵심 설계 포인트
 
-### 7-1. 동시성 문제 해결
+### 8-1. 동시성 문제 해결
 
 여러 요청이 동시에 같은 key를 수정할 때 값을 안전하게 지키기 위해 **Single Writer + Queue** 구조를 적용했습니다.
 
 - 모든 쓰기 명령은 queue에 넣고
 - writer thread 하나가 순서대로 처리합니다.
 
-### 7-2. TTL 처리
+### 8-2. TTL 처리
 
 만료된 값은 두 방식으로 처리합니다.
 
 - **Lazy Expiration**: 조회 시 만료 여부 확인 후 삭제
 - **Background Cleanup**: 주기적으로 만료 key 정리
 
-### 7-3. 데이터 무효화
+### 8-3. 데이터 무효화
 
 삭제, 타입 변경, 버전 전환 이후 오래된 결과가 남지 않도록 `managers/invalidation_manager.py`를 통해 캐시 무효화를 처리했습니다.
 
-### 7-4. 복구와 내구성
+### 8-4. 복구와 내구성
 
 메모리 기반 구조의 한계를 보완하기 위해 아래를 구현했습니다.
 
@@ -118,7 +130,7 @@ tests/               # 테스트
 
 복구 중에는 새 요청을 잠시 대기시켜 데이터가 섞이지 않도록 했습니다.
 
-## 8. 테스트와 검증
+## 9. 테스트와 검증
 
 다음 관점으로 테스트를 구성했습니다.
 
@@ -129,18 +141,6 @@ tests/               # 테스트
 - AOF 복구 테스트
 - invalidation / version 테스트
 - 프로토콜 테스트
-
-## 9. 성능 비교
-
-`performance/` 폴더에서 mini-redis와 MongoDB를 비교하는 벤치마크를 구성했습니다.
-
-비교 항목은 다음과 같습니다.
-
-- 응답 속도
-- 처리량(RPS)
-- p50 / p95 / p99 지연 시간
-
-## 9-1. 성능 그래프 시각자료
 
 ## 10. 프로젝트를 통해 배운 점
 
