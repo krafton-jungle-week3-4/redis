@@ -9,7 +9,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from core_state import expiry_store, hash_store, list_store, set_store, string_store, zset_store
+from core_state import (
+    archived_zset_store,
+    closed_zset_keys,
+    expiry_store,
+    hash_store,
+    list_store,
+    set_store,
+    string_store,
+    zset_store,
+)
 
 
 @dataclass
@@ -20,6 +29,8 @@ class SnapshotContext:
     lists: dict[str, list[str]]
     hashes: dict[str, dict[str, str]]
     zsets: dict[str, dict[str, float]]
+    archived_zsets: dict[str, dict[str, float]]
+    closed_zsets: list[str]
     expiry: dict[str, float]
     detached_set_keys: set[str] = field(default_factory=set)
     detached_list_keys: set[str] = field(default_factory=set)
@@ -46,6 +57,8 @@ def begin_snapshot(path_arg: str | None = None) -> SnapshotContext:
         lists=dict(list_store),
         hashes=dict(hash_store),
         zsets=dict(zset_store),
+        archived_zsets={key: dict(value) for key, value in archived_zset_store.items()},
+        closed_zsets=sorted(closed_zset_keys),
         expiry=dict(expiry_store),
     )
     _active_snapshot = context
@@ -95,6 +108,8 @@ def _normalize_for_json(context: SnapshotContext) -> dict[str, Any]:
         "lists": context.lists,
         "hashes": context.hashes,
         "zsets": context.zsets,
+        "archived_zsets": context.archived_zsets,
+        "closed_zsets": context.closed_zsets,
         "expiry": context.expiry,
     }
 

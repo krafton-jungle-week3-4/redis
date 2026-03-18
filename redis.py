@@ -74,6 +74,7 @@ WRITE_COMMANDS = {
     "ZREM",
     "EXPIRE",
     "PERSIST",
+    "CLOSESEASON",
 }
 
 write_queue: Queue[WriteRequest] = Queue()
@@ -189,3 +190,4 @@ def execute(command: list[str]) -> RedisResponse:
 
         with store_lock:
             return _execute_locked(command)
+
