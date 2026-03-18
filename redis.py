@@ -25,6 +25,7 @@ from core_state import (
     finish_loading,
     hash_store,
     list_store,
+    merge_state,
     restore_state,
     set_store,
     store_lock,
@@ -50,6 +51,7 @@ class WriteRequest:
 
     command: list[str] | None = None
     snapshot: dict[str, Any] | None = None
+    restore_policy: str = "replace"
     done: Event = field(default_factory=Event)
     result: RedisResponse | None = None
 
@@ -96,8 +98,13 @@ def _execute_locked(command: list[str]) -> RedisResponse:
     return _error(err_unknown_command(command[0]))
 
 
-def _execute_restore_locked(snapshot: dict[str, Any]) -> RedisResponse:
-    restore_state(snapshot)
+def _execute_restore_locked(snapshot: dict[str, Any], restore_policy: str) -> RedisResponse:
+    if restore_policy == "replace":
+        restore_state(snapshot)
+    elif restore_policy == "merge":
+        merge_state(snapshot)
+    else:
+        return _error(f"ERR unsupported restore policy '{restore_policy}'")
     purge_expired_keys()
     return {"type": "simple_string", "value": "OK"}
 
@@ -108,7 +115,7 @@ def _writer_loop() -> None:
         try:
             with store_lock:
                 if request.snapshot is not None:
-                    request.result = _execute_restore_locked(request.snapshot)
+                    request.result = _execute_restore_locked(request.snapshot, request.restore_policy)
                 elif request.command is not None:
                     request.result = _execute_locked(request.command)
                 else:
@@ -127,8 +134,8 @@ def _submit_write(command: list[str]) -> RedisResponse:
     return request.result
 
 
-def _submit_restore(snapshot: dict[str, Any]) -> RedisResponse:
-    request = WriteRequest(snapshot=snapshot)
+def _submit_restore(snapshot: dict[str, Any], restore_policy: str) -> RedisResponse:
+    request = WriteRequest(snapshot=snapshot, restore_policy=restore_policy)
     write_queue.put(request)
     request.done.wait()
     if request.result is None:
@@ -140,7 +147,7 @@ writer_thread = Thread(target=_writer_loop, name="mini-redis-single-writer", dae
 writer_thread.start()
 
 
-def restore_from_loader(loader: Callable[[], dict[str, Any]]) -> RedisResponse:
+def restore_from_loader(loader: Callable[[], dict[str, Any]], restore_policy: str = "replace") -> RedisResponse:
     """복구 시작 시점부터 새 요청을 막고, loader 결과를 writer queue에서 복구합니다."""
     ensure_background_cleanup_started(lambda: store_lock)
 
@@ -148,13 +155,13 @@ def restore_from_loader(loader: Callable[[], dict[str, Any]]) -> RedisResponse:
         begin_loading()
         try:
             snapshot = loader()
-            return _submit_restore(snapshot)
+            return _submit_restore(snapshot, restore_policy)
         finally:
             finish_loading()
 
 
-def restore_from_snapshot_data(snapshot: dict[str, Any]) -> RedisResponse:
-    return restore_from_loader(lambda: snapshot)
+def restore_from_snapshot_data(snapshot: dict[str, Any], restore_policy: str = "replace") -> RedisResponse:
+    return restore_from_loader(lambda: snapshot, restore_policy)
 
 
 def execute(command: list[str]) -> RedisResponse:

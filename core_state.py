@@ -9,7 +9,7 @@ from invalidation_manager import invalidate_all, invalidate_key, read_exists, re
 
 
 class InvalidationAwareDict(dict):
-    """테스트에서 clear()로 스토어 초기화될 때 캐시도 함께 비웁니다."""
+    """When tests clear stores, clear read-cache as well."""
 
     def clear(self) -> None:  # type: ignore[override]
         super().clear()
@@ -23,7 +23,7 @@ hash_store: InvalidationAwareDict[str, dict[str, str]] = InvalidationAwareDict()
 zset_store: InvalidationAwareDict[str, dict[str, float]] = InvalidationAwareDict()
 expiry_store: InvalidationAwareDict[str, float] = InvalidationAwareDict()
 
-# 시즌 종료된 leaderboard는 별도 보관소에 남기고, 이후 쓰기는 차단합니다.
+# Closed leaderboard state (season settle support)
 archived_zset_store: dict[str, dict[str, float]] = {}
 closed_zset_keys: set[str] = set()
 
@@ -92,7 +92,7 @@ def clear_all_stores() -> None:
 
 
 def snapshot_state() -> dict[str, Any]:
-    """현재 메모리 상태를 직렬화 가능한 형태로 복사합니다."""
+    """Create a JSON-serializable snapshot from current memory state."""
     return {
         "strings": dict(string_store),
         "sets": {key: sorted(value) for key, value in set_store.items()},
@@ -106,9 +106,29 @@ def snapshot_state() -> dict[str, Any]:
 
 
 def restore_state(snapshot: dict[str, Any]) -> None:
-    """스냅샷 내용을 현재 메모리 상태로 완전히 교체합니다."""
+    """Replace current memory state from snapshot payload."""
     clear_all_stores()
 
+    string_store.update(snapshot.get("strings", {}))
+    set_store.update({key: set(value) for key, value in snapshot.get("sets", {}).items()})
+    list_store.update({key: list(value) for key, value in snapshot.get("lists", {}).items()})
+    hash_store.update({key: dict(value) for key, value in snapshot.get("hashes", {}).items()})
+    zset_store.update(
+        {key: {member: float(score) for member, score in value.items()} for key, value in snapshot.get("zsets", {}).items()}
+    )
+    archived_zset_store.update(
+        {
+            key: {member: float(score) for member, score in value.items()}
+            for key, value in snapshot.get("archived_zsets", {}).items()
+        }
+    )
+    closed_zset_keys.update(snapshot.get("closed_zsets", []))
+    expiry_store.update({key: float(value) for key, value in snapshot.get("expiry", {}).items()})
+    invalidate_all()
+
+
+def merge_state(snapshot: dict[str, Any]) -> None:
+    """Merge snapshot into active state (keys not in snapshot are preserved)."""
     string_store.update(snapshot.get("strings", {}))
     set_store.update({key: set(value) for key, value in snapshot.get("sets", {}).items()})
     list_store.update({key: list(value) for key, value in snapshot.get("lists", {}).items()})
