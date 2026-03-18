@@ -3,6 +3,7 @@ import os
 from collections.abc import Callable
 from threading import Thread
 
+from error_contract import ERR_INTERNAL_SERVER
 from protocol_parser import ProtocolParseError, read_command
 from protocol_response import ProtocolResponseError, encode_response
 
@@ -36,7 +37,13 @@ def handle_client_connection(client_socket: socket.socket, execute: Callable[[li
             if command is None:
                 break
 
-            result = execute(command)
+            try:
+                result = execute(command)
+            except Exception:
+                client_socket.sendall(
+                    encode_response({"type": "error", "value": ERR_INTERNAL_SERVER}).encode("utf-8")
+                )
+                continue
 
             try:
                 response = encode_response(result)
