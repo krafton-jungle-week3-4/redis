@@ -1,4 +1,4 @@
-"""Set command handlers for redis.py core."""
+﻿"""Set command handlers for redis.py core."""
 
 from typing import Any
 
@@ -20,16 +20,27 @@ def has_wrong_variable_arity(command_name: str, command: list[str]) -> bool:
     return False
 
 
+def _is_wrong_type_key(
+    key: str,
+    string_store: dict[str, str],
+    list_store: dict[str, list[str]],
+    zset_store: dict[str, dict[str, float]],
+) -> bool:
+    return key in string_store or key in list_store or key in zset_store
+
+
 def execute_set_command(
     command_name: str,
     command: list[str],
     string_store: dict[str, str],
     set_store: dict[str, set[str]],
+    list_store: dict[str, list[str]],
+    zset_store: dict[str, dict[str, float]],
 ) -> dict[str, Any] | None:
     if command_name == "SADD":
         key = command[1]
         member = command[2]
-        if key in string_store:
+        if _is_wrong_type_key(key, string_store, list_store, zset_store):
             return {"type": "error", "value": ERR_WRONG_TYPE_SET}
         members = set_store.setdefault(key, set())
         before = len(members)
@@ -39,7 +50,7 @@ def execute_set_command(
     if command_name == "SREM":
         key = command[1]
         member = command[2]
-        if key in string_store:
+        if _is_wrong_type_key(key, string_store, list_store, zset_store):
             return {"type": "error", "value": ERR_WRONG_TYPE_SET}
         members = set_store.get(key)
         if members is None or member not in members:
@@ -52,14 +63,14 @@ def execute_set_command(
     if command_name == "SISMEMBER":
         key = command[1]
         member = command[2]
-        if key in string_store:
+        if _is_wrong_type_key(key, string_store, list_store, zset_store):
             return {"type": "error", "value": ERR_WRONG_TYPE_SET}
         members = set_store.get(key)
         return {"type": "integer", "value": 1 if members is not None and member in members else 0}
 
     if command_name == "SMEMBERS":
         key = command[1]
-        if key in string_store:
+        if _is_wrong_type_key(key, string_store, list_store, zset_store):
             return {"type": "error", "value": ERR_WRONG_TYPE_SET}
         members = set_store.get(key)
         if members is None:
@@ -69,7 +80,7 @@ def execute_set_command(
     if command_name == "SINTER":
         keys = command[1:]
         for key in keys:
-            if key in string_store:
+            if _is_wrong_type_key(key, string_store, list_store, zset_store):
                 return {"type": "error", "value": ERR_WRONG_TYPE_SET}
         sets = [set_store.get(key, set()) for key in keys]
         if not sets:
@@ -82,7 +93,7 @@ def execute_set_command(
     if command_name == "SUNION":
         keys = command[1:]
         for key in keys:
-            if key in string_store:
+            if _is_wrong_type_key(key, string_store, list_store, zset_store):
                 return {"type": "error", "value": ERR_WRONG_TYPE_SET}
         union_set: set[str] = set()
         for key in keys:
@@ -91,7 +102,7 @@ def execute_set_command(
 
     if command_name == "SCARD":
         key = command[1]
-        if key in string_store:
+        if _is_wrong_type_key(key, string_store, list_store, zset_store):
             return {"type": "error", "value": ERR_WRONG_TYPE_SET}
         members = set_store.get(key)
         return {"type": "integer", "value": 0 if members is None else len(members)}

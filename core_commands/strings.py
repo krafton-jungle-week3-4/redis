@@ -1,4 +1,4 @@
-"""String command handlers for redis.py core."""
+﻿"""String command handlers for redis.py core."""
 
 from typing import Any
 
@@ -35,6 +35,8 @@ def execute_string_command(
     command: list[str],
     store: dict[str, str],
     set_store: dict[str, set[str]],
+    list_store: dict[str, list[str]],
+    zset_store: dict[str, dict[str, float]],
 ) -> dict[str, Any] | None:
     if command_name == "PING":
         return {"type": "simple_string", "value": "PONG"}
@@ -45,14 +47,15 @@ def execute_string_command(
     if command_name == "SET":
         key = command[1]
         value = command[2]
-        # 문자열 저장 시 같은 키의 set 데이터는 제거한다.
         set_store.pop(key, None)
+        list_store.pop(key, None)
+        zset_store.pop(key, None)
         store[key] = value
         return {"type": "simple_string", "value": "OK"}
 
     if command_name == "GET":
         key = command[1]
-        if key in set_store:
+        if key in set_store or key in list_store or key in zset_store:
             return {"type": "error", "value": ERR_WRONG_TYPE_STRING}
         if key not in store:
             return {"type": "null", "value": None}
@@ -60,7 +63,7 @@ def execute_string_command(
 
     if command_name == "INCR":
         key = command[1]
-        if key in set_store:
+        if key in set_store or key in list_store or key in zset_store:
             return {"type": "error", "value": ERR_WRONG_TYPE_STRING}
         current = store.get(key)
         if current is None:
@@ -75,7 +78,7 @@ def execute_string_command(
 
     if command_name == "DECR":
         key = command[1]
-        if key in set_store:
+        if key in set_store or key in list_store or key in zset_store:
             return {"type": "error", "value": ERR_WRONG_TYPE_STRING}
         current = store.get(key)
         if current is None:
@@ -92,15 +95,16 @@ def execute_string_command(
         for index in range(1, len(command), 2):
             key = command[index]
             value = command[index + 1]
-            # 문자열 저장 시 같은 키의 set 데이터는 제거한다.
             set_store.pop(key, None)
+            list_store.pop(key, None)
+            zset_store.pop(key, None)
             store[key] = value
         return {"type": "simple_string", "value": "OK"}
 
     if command_name == "MGET":
         keys = command[1:]
         for key in keys:
-            if key in set_store:
+            if key in set_store or key in list_store or key in zset_store:
                 return {"type": "error", "value": ERR_WRONG_TYPE_STRING}
         values = [store.get(key) for key in keys]
         return {"type": "array", "value": values}
