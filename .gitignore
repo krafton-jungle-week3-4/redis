@@ -1,5 +1,4 @@
 .venv/
-.venv-win/
 .codex-backup/
 __pycache__/
 *.pyc
