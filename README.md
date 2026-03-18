@@ -18,9 +18,9 @@ Each data type lives in its own package, while `common/` contains shared store s
 
 ## Features
 
-- `set`: store a value in a global in-memory dictionary
-- `get`: read a value from the global in-memory dictionary
-- `increment`: increase an integer value stored in the global in-memory dictionary
+- REST-style endpoints for strings, lists, sets, hashes, and sorted sets
+- TTL support for keys
+- Integer and score increment operations
 
 ## Run
 
@@ -35,12 +35,12 @@ The server starts at `http://127.0.0.1:8000`.
 
 ## API
 
-### Set a value
+### Store a string value
 
 ```bash
-curl -X POST http://127.0.0.1:8000/set \
+curl -X PUT http://127.0.0.1:8000/keys/name \
   -H "Content-Type: application/json" \
-  -d '{"key":"name","value":"redis"}'
+  -d '{"value":"redis"}'
 ```
 
 Example response:
@@ -56,7 +56,7 @@ Example response:
 ### Get a value
 
 ```bash
-curl http://127.0.0.1:8000/get/name
+curl http://127.0.0.1:8000/keys/name
 ```
 
 Example response:
@@ -73,7 +73,7 @@ If the key does not exist, `value` is returned as `null`.
 ### Increment a value
 
 ```bash
-curl -X POST http://127.0.0.1:8000/increment/count
+curl -X POST http://127.0.0.1:8000/keys/count/increment
 ```
 
 Example response:
@@ -94,4 +94,18 @@ If the stored value is not an integer string, the API returns HTTP 400:
 {
   "detail": "value is not an integer"
 }
+```
+
+### Add a list item
+
+```bash
+curl -X POST http://127.0.0.1:8000/lists/numbers/items/right \
+  -H "Content-Type: application/json" \
+  -d '{"value":"1"}'
+```
+
+### Add a set member
+
+```bash
+curl -X PUT http://127.0.0.1:8000/sets/tags/members/python
 ```
