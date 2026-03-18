@@ -1,4 +1,5 @@
 import socket
+import os
 from collections.abc import Callable
 from threading import Thread
 
@@ -83,6 +84,18 @@ def run_server(
         server_socket.close()
 
 
+def _get_server_config() -> tuple[str, int]:
+    host = os.getenv("MINIREDIS_HOST", DEFAULT_HOST)
+    port_text = os.getenv("MINIREDIS_PORT", str(DEFAULT_PORT))
+
+    try:
+        port = int(port_text)
+    except ValueError as exc:
+        raise RuntimeError("MINIREDIS_PORT must be an integer.") from exc
+
+    return host, port
+
+
 def _load_execute() -> Callable[[list[str]], dict]:
     """
     나중에 `redis.py`가 준비되면 그 안의 execute 함수를 자동으로 불러온다.
@@ -103,4 +116,5 @@ def _load_execute() -> Callable[[list[str]], dict]:
 
 if __name__ == "__main__":
     # 직접 실행할 때는 redis.py의 execute를 불러와 서버를 시작한다.
-    run_server(_load_execute())
+    host, port = _get_server_config()
+    run_server(_load_execute(), host=host, port=port)
