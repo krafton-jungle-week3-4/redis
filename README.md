@@ -158,7 +158,7 @@ What it does:
 - writes the raw unittest output to `testresult.txt`
 - builds a structured QA report in `qa_report.json`
 - uploads both files as workflow artifacts
-- appends a QA status table to the Notion page `327bd214-dd7e-80aa-a930-c2ff985f64a3`
+- replaces the page content with the latest QA summary and status table on `327bd214-dd7e-80aa-a930-c2ff985f64a3`
 
 Required GitHub secrets:
 
@@ -171,5 +171,5 @@ Notion setup:
 2. Share the target page with that integration using `... > Add connections`.
 3. Store the integration token in the `NOTION_TOKEN` repository secret.
 
-The Notion update step uses `scripts/update_notion_test_results.py` to append the latest QA summary block and table to the page.
+The Notion update step uses `scripts/update_notion_test_results.py` to clear the current page body and write the latest QA summary block and table.
 The test execution and QA case mapping are handled by `scripts/run_qa_suite.py`.
