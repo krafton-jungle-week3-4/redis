@@ -49,6 +49,35 @@ jobs:
             testresult.txt
             qa_report.json
 
+      - name: Validate QA report for Notion
+        if: always()
+        run: python scripts/update_notion_test_results.py qa_report.json --dry-run > /tmp/notion_payload.json
+
+      - name: Summarize QA report
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(Path("qa_report.json").read_text(encoding="utf-8"))
+          counts = report.get("counts", {})
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## QA report\n")
+              summary.write(f"- Cases: {len(report.get('cases', []))}\n")
+              summary.write(f"- Summary: {report.get('summary_text', 'unknown')}\n")
+              summary.write(
+                  "- Status counts: "
+                  f"pass={counts.get('pass', 0)}, "
+                  f"fail={counts.get('fail', 0)}, "
+                  f"partial={counts.get('partial', 0)}, "
+                  f"not_covered={counts.get('not_covered', 0)}\n"
+              )
+          PY
+
       - name: Update Notion page
         id: update_notion
         if: always() && env.NOTION_TOKEN != ''
