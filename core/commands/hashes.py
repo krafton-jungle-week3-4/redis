@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from error_contract import ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_HASH
-from snapshot_manager import prepare_mutable_write
+from core.error_contract import ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_HASH
+from managers.snapshot_manager import prepare_mutable_write
 
 
 FIXED_ARITY: dict[str, int] = {

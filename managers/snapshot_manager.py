@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from core_state import (
+from core.core_state import (
     archived_zset_store,
     closed_zset_keys,
     expiry_store,

@@ -4,9 +4,9 @@ import time
 import unittest
 from pathlib import Path
 
-from core_state import clear_all_stores
+from core.core_state import clear_all_stores
 from redis import execute
-from restore_manager import restore_snapshot, save_snapshot
+from managers.restore_manager import restore_snapshot, save_snapshot
 
 
 class RestoreBehaviorTests(unittest.TestCase):

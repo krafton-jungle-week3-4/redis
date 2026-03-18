@@ -2,7 +2,7 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from core_state import archived_zset_store, clear_all_stores, closed_zset_keys, zset_store
+from core.core_state import archived_zset_store, clear_all_stores, closed_zset_keys, zset_store
 from redis import execute
 
 
@@ -85,4 +85,3 @@ class SeasonCloseCoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

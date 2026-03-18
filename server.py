@@ -3,9 +3,9 @@ import os
 from collections.abc import Callable
 from threading import Thread
 
-from error_contract import ERR_INTERNAL_SERVER
-from protocol_parser import ProtocolParseError, read_command
-from protocol_response import ProtocolResponseError, encode_response
+from core.error_contract import ERR_INTERNAL_SERVER
+from resp_protocol.protocol_parser import ProtocolParseError, read_command
+from resp_protocol.protocol_response import ProtocolResponseError, encode_response
 
 
 DEFAULT_HOST = "0.0.0.0"

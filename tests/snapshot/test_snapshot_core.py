@@ -4,7 +4,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from core_state import clear_all_stores
+from core.core_state import clear_all_stores
 from redis import execute
 
 

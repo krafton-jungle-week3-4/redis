@@ -4,8 +4,8 @@ import time
 import unittest
 from pathlib import Path
 
-from aof_manager import get_aof_path, replay_aof, reset_aof, set_aof_path
-from core_state import clear_all_stores
+from core.core_state import clear_all_stores
+from managers.aof_manager import get_aof_path, replay_aof, reset_aof, set_aof_path
 from redis import execute
 
 

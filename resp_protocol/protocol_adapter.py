@@ -1,7 +1,7 @@
 from collections.abc import Callable
 
-from protocol_parser import ProtocolParseError, parse_command_line
-from protocol_response import ProtocolResponseError, encode_response
+from resp_protocol.protocol_parser import ProtocolParseError, parse_command_line
+from resp_protocol.protocol_response import ProtocolResponseError, encode_response
 
 
 def handle_raw_command(raw: str, execute: Callable[[list[str]], dict]) -> str:
@@ -40,4 +40,3 @@ def handle_raw_command(raw: str, execute: Callable[[list[str]], dict]) -> str:
         # 응답 직렬화 단계에서 문제가 생기면 서버가 그대로 죽지 않도록
         # 안전한 에러 응답으로 감싸서 반환한다.
         return encode_response({"type": "error", "value": str(exc)})
-

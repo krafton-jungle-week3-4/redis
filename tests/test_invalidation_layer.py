@@ -1,6 +1,6 @@
 import unittest
 
-from invalidation_manager import debug_cache_snapshot, invalidate_all
+from managers.invalidation_manager import debug_cache_snapshot, invalidate_all
 from redis import execute, expiry_store, hash_store, list_store, set_store, string_store, zset_store
 
 

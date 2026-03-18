@@ -5,7 +5,13 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from invalidation_manager import invalidate_all, invalidate_key, read_exists, read_string_value, read_type
+from managers.invalidation_manager import (
+    invalidate_all,
+    invalidate_key,
+    read_exists,
+    read_string_value,
+    read_type,
+)
 
 
 class InvalidationAwareDict(dict):

@@ -28,18 +28,11 @@ Mini Redis는 Python으로 구현한 in-memory key-value 저장소입니다.
 ## 4. 전체 구조
 
 ```text
-server.py            # RESP/TCP 서버
+server.py            # RESP/TCP 서버 엔트리포인트
 redis.py             # 명령 실행 진입점 + 동시성 제어
-command_router.py    # 명령 분기
-core_commands/       # 자료형별 명령 구현
-core_state.py        # 실제 저장소
-snapshot_manager.py  # snapshot 저장
-restore_manager.py   # restore
-season_manager.py    # 시즌 종료
-version_manager.py   # 버전 전환
-aof_manager.py       # AOF 복구
-ttl_manager.py       # TTL 처리
-invalidation_manager.py # 무효화
+core/                # 라우팅, 저장소, 에러 계약, 자료형별 명령
+managers/            # snapshot, restore, TTL, AOF, version, invalidation
+resp_protocol/       # 파서/응답 인코더/어댑터
 performance/         # 성능 비교
 tests/               # 테스트
 ```
@@ -94,7 +87,7 @@ tests/               # 테스트
 
 ### 6-3. 데이터 무효화
 
-삭제, 타입 변경, 버전 전환 이후 오래된 결과가 남지 않도록 `invalidation_manager.py`를 통해 캐시 무효화를 처리했습니다.
+삭제, 타입 변경, 버전 전환 이후 오래된 결과가 남지 않도록 `managers/invalidation_manager.py`를 통해 캐시 무효화를 처리했습니다.
 
 ### 6-4. 복구와 내구성
 

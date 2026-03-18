@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core_state import delete_key_everywhere, key_exists, key_type
+from core.core_state import delete_key_everywhere, key_exists, key_type
 
 
 def execute_common_key_command(command_name: str, command: list[str]) -> dict | None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core_state import current_namespace, switch_namespace
+from core.core_state import current_namespace, switch_namespace
 
 
 FIXED_ARITY: dict[str, int] = {

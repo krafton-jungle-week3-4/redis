@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
-from core_commands.common_keys import execute_common_key_command
-from core_commands.hashes import FIXED_ARITY as HASH_FIXED_ARITY, execute_hash_command
-from core_commands.lists import FIXED_ARITY as LIST_FIXED_ARITY, execute_list_command
-from core_commands.sets import (
+from core.commands.common_keys import execute_common_key_command
+from core.commands.hashes import FIXED_ARITY as HASH_FIXED_ARITY, execute_hash_command
+from core.commands.lists import FIXED_ARITY as LIST_FIXED_ARITY, execute_list_command
+from core.commands.sets import (
     FIXED_ARITY as SET_FIXED_ARITY,
     execute_set_command,
     has_wrong_variable_arity as has_wrong_set_variable_arity,
 )
-from core_commands.strings import (
+from core.commands.strings import (
     FIXED_ARITY as STRING_FIXED_ARITY,
     execute_string_command,
     has_wrong_variable_arity as has_wrong_string_variable_arity,
 )
-from core_commands.zsets import FIXED_ARITY as ZSET_FIXED_ARITY, execute_zset_command
-from core_state import hash_store, list_store, set_store, string_store, zset_store
-from invalidation_manager import invalidate_key, invalidate_many
-from season_manager import FIXED_ARITY as SEASON_FIXED_ARITY, execute_season_command
-from ttl_manager import clear_ttl_on_write, handle_ttl_command
-from version_manager import FIXED_ARITY as VERSION_FIXED_ARITY, execute_version_command
+from core.commands.zsets import FIXED_ARITY as ZSET_FIXED_ARITY, execute_zset_command
+from core.core_state import hash_store, list_store, set_store, string_store, zset_store
+from managers.invalidation_manager import invalidate_key, invalidate_many
+from managers.season_manager import FIXED_ARITY as SEASON_FIXED_ARITY, execute_season_command
+from managers.ttl_manager import clear_ttl_on_write, handle_ttl_command
+from managers.version_manager import FIXED_ARITY as VERSION_FIXED_ARITY, execute_version_command
 
 COMMON_FIXED_ARITY: dict[str, int] = {
     "DEL": 2,

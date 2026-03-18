@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from core_state import archived_zset_store, closed_zset_keys, expiry_store, zset_store
-from error_contract import ERR_LEADERBOARD_CLOSED
+from core.core_state import archived_zset_store, closed_zset_keys, expiry_store, zset_store
+from core.error_contract import ERR_LEADERBOARD_CLOSED
 
 
 FIXED_ARITY: dict[str, int] = {

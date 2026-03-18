@@ -1,8 +1,8 @@
 import unittest
 from io import BytesIO
 
-from core_state import clear_all_stores
-from error_contract import ERR_INTERNAL_SERVER
+from core.core_state import clear_all_stores
+from core.error_contract import ERR_INTERNAL_SERVER
 from server import handle_client_connection
 
 

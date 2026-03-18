@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from io import BufferedReader
-from error_contract import ERR_EMPTY_COMMAND
+from core.error_contract import ERR_EMPTY_COMMAND
 
 
 class ProtocolParseError(ValueError):

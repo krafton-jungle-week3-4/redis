@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from core_state import key_type, string_value
-from error_contract import ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_STRING
+from core.core_state import key_type, string_value
+from core.error_contract import ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_STRING
 
 
 FIXED_ARITY: dict[str, int] = {

@@ -2,10 +2,10 @@
 
 from typing import Any
 
-from core_state import archived_zset_store, closed_zset_keys
-from error_contract import ERR_VALUE_NOT_FLOAT, ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_ZSET
-from season_manager import reject_if_closed_leaderboard
-from snapshot_manager import prepare_mutable_write
+from core.core_state import archived_zset_store, closed_zset_keys
+from core.error_contract import ERR_VALUE_NOT_FLOAT, ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_ZSET
+from managers.season_manager import reject_if_closed_leaderboard
+from managers.snapshot_manager import prepare_mutable_write
 
 
 FIXED_ARITY: dict[str, int] = {

@@ -1,4 +1,4 @@
-from error_contract import (
+from core.error_contract import (
     ERR_EMPTY_COMMAND,
     err_unknown_command,
     err_wrong_number_of_arguments,

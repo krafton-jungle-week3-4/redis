@@ -191,7 +191,15 @@ def _cleanup_keys(client_factory: ClientFactory, keys: list[str]) -> None:
 
 
 def _clear_core_state() -> None:
-    from core_state import expiry_store, hash_store, list_store, set_store, store_lock, string_store, zset_store
+    from core.core_state import (
+        expiry_store,
+        hash_store,
+        list_store,
+        set_store,
+        store_lock,
+        string_store,
+        zset_store,
+    )
 
     with store_lock:
         string_store.clear()

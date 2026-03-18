@@ -21,9 +21,8 @@ from queue import Queue
 from threading import Event, RLock, Thread
 from typing import Any, Literal, TypedDict
 
-from aof_manager import append_aof_command
-from command_router import STATELESS_COMMANDS, dispatch_command, get_wrong_arity_command
-from core_state import (
+from core.command_router import STATELESS_COMMANDS, dispatch_command, get_wrong_arity_command
+from core.core_state import (
     begin_loading,
     expiry_store,
     finish_loading,
@@ -37,9 +36,10 @@ from core_state import (
     wait_until_ready,
     zset_store,
 )
-from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
-from snapshot_manager import begin_snapshot, finish_snapshot, write_snapshot_file
-from ttl_manager import ensure_background_cleanup_started, purge_expired_keys
+from core.error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
+from managers.aof_manager import append_aof_command
+from managers.snapshot_manager import begin_snapshot, finish_snapshot, write_snapshot_file
+from managers.ttl_manager import ensure_background_cleanup_started, purge_expired_keys
 
 ResponseType = Literal["simple_string", "bulk_string", "null", "integer", "error", "array"]
 

@@ -2,7 +2,7 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from core_state import expiry_store, hash_store, list_store, set_store, string_store, zset_store
+from core.core_state import expiry_store, hash_store, list_store, set_store, string_store, zset_store
 from redis import execute
 
 

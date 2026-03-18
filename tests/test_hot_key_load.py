@@ -4,7 +4,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from core_state import clear_all_stores
+from core.core_state import clear_all_stores
 from redis import execute
 
 
