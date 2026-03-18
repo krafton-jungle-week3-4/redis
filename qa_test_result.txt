@@ -1,0 +1,102 @@
+QA 기준 문서:
+https://docs.google.com/document/d/1z14GwU0YyZ9h377Hut5bSNYeX3w-jyoMIwisJ4nKXsg/edit?tab=t.0#heading=h.kv2rbht6z98x
+
+생성 시각:
+2026-03-18 16:52:54 KST
+
+로컬 테스트 실행 명령:
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -q
+
+로컬 테스트 결과:
+----------------------------------------------------------------------
+Ran 44 tests in 1.064s
+
+OK
+
+상태 기준:
+- 통과: tests/ 아래에 해당 자동화 테스트가 있고 실제로 통과함
+- 부분 반영: 관련 테스트는 있지만, 문서의 QA 시나리오와 규모가 완전히 같지는 않음
+- 미반영: 해당 자동화 테스트가 없거나 기능이 아직 구현되지 않음
+
+P0
+- 동일 멤버 동시 증가: 부분 반영
+  tests/zsets/test_zset_api.py에서 같은 멤버 점수 동시 증가를 검증하지만, 문서의 100 clients x 100회 = 10000 시나리오까지는 아님
+- 다중 멤버 갱신: 미반영
+  여러 멤버를 랜덤하게 동시에 갱신하고 최종 합계를 검증하는 테스트는 없음
+- 쓰기 후 읽기: 부분 반영
+  일반 갱신 후 즉시 조회 동작은 검증하지만, queue/순차 처리 정합성 시나리오로 검증하지는 않음
+- 실시간 반영: 통과
+  점수 갱신 후 rank/score 조회가 바로 반영되는 테스트가 있음
+- 동점 처리: 미반영
+  `updated_at` 기준 동점 처리 기능이 구현되지 않았고 테스트도 없음
+- 완전 동점: 미반영
+  완전 동점 상태에서 반복 조회 결과의 결정성을 검증하는 테스트가 없음
+- Lazy expiration: 통과
+  대기 후 조회 시 `null`, `ttl=-2`, `exists=0`을 확인하는 테스트가 있음
+- Background cleanup: 미반영
+  백그라운드 정리 기능이 구현되지 않았고 테스트도 없음
+- PERSIST: 통과
+  TTL 제거 동작을 확인하는 테스트가 있음
+- TTL 값: 통과
+  TTL의 `-1`, `-2` 상태를 확인하는 테스트가 있음
+- 타입 충돌: 통과
+  string/list/set/hash/zset 간 잘못된 타입 호출 시 에러를 확인하는 테스트가 있음
+- RESP 오류: 미반영
+  잘못된 RESP 입력에도 서버가 살아있는지 확인하는 테스트는 없음
+- snapshot: 미반영
+  snapshot 기능이 구현되지 않았고 테스트도 없음
+- snapshot 중 쓰기: 미반영
+  snapshot 수행 중 쓰기 일관성 테스트는 없음
+- 복구: 미반영
+  재시작 후 restore 복구 테스트는 없음
+- 복구 중 요청: 미반영
+  복구 중 요청 처리 정책 테스트는 없음
+- 종료 경쟁: 미반영
+  시즌 종료 경쟁 상황 처리 테스트는 없음
+
+P1 - String
+- SET/GET: 통과
+- DEL: 통과
+- INCR: 통과
+- INCR 에러: 통과
+- MSET: 통과
+- MGET: 통과
+
+P1 - TTL
+- TTL 경계: 미반영
+  TTL 0 / 음수 경계 동작은 tests/에서 따로 검증하지 않음
+- TTL 갱신: 미반영
+  반복 호출 시 마지막 TTL이 적용되는지 검증하는 테스트는 없음
+
+P1 - List
+- push: 통과
+- pop: 통과
+- 음수 index: 통과
+- 범위 초과: 통과
+- index: 통과
+- set: 통과
+
+P1 - Ranking
+- rank: 통과
+- range: 통과
+- pagination: 미반영
+  현재 구현은 `page/limit`이 아니라 `start/stop` 기준이며 해당 QA 시나리오 테스트는 없음
+- around: 미반영
+  around 조회 API가 없고 테스트도 없음
+- 없는 member: 통과
+
+P2
+- 삭제 후 조회 반영: 부분 반영
+  삭제 후 조회 동작은 검증하지만, 별도 invalidation 레이어 개념은 구현되지 않음
+- 버전 전환: 미반영
+  namespace version 전환 기능이 구현되지 않았고 테스트도 없음
+- 기존 데이터 restore: 미반영
+  restore merge/replace 정책 테스트는 없음
+- 장애 후 복구: 미반영
+  AOF 기반 내구성/재기동 복구 테스트는 없음
+- Mongo 비교 성능: 미반영
+  MongoDB 비교 벤치마크 테스트는 tests/에 없음
+- Hot key 부하: 미반영
+  hot key 집중 부하 테스트는 tests/에 없음
+- 내부 예외: 미반영
+  내부 예외 발생 시 서버 유지 여부 테스트는 없음
