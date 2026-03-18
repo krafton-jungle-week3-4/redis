@@ -1,6 +1,7 @@
 import unittest
 
-from main import expiry_store, redis_store
+import main
+from main import expiry_store, redis_store, zset_order_store
 
 
 class StoreIsolationTestCase(unittest.TestCase):
@@ -9,3 +10,5 @@ class StoreIsolationTestCase(unittest.TestCase):
     def setUp(self) -> None:
         redis_store.clear()
         expiry_store.clear()
+        zset_order_store.clear()
+        main.zset_update_sequence = 0

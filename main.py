@@ -1,7 +1,7 @@
 import math
 import os
 import time
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
@@ -11,7 +11,10 @@ app = FastAPI(title="mini-redis")
 
 redis_store: dict[str, dict[str, Any]] = {}
 expiry_store: dict[str, float] = {}
+zset_order_store: dict[str, dict[str, int]] = {}
 increment_lock = Lock()
+zset_order_lock = Lock()
+zset_update_sequence = 0
 
 
 class SetRequest(BaseModel):
@@ -245,6 +248,12 @@ class ZRangeResponse(BaseModel):
     members: list[str]
 
 
+class ZAroundResponse(BaseModel):
+    key: str
+    member: str
+    members: list[str]
+
+
 class ZIncrByRequest(BaseModel):
     increment: float
 
@@ -266,11 +275,38 @@ class ZCardResponse(BaseModel):
     count: int
 
 
+def _clear_auxiliary_key_state(key: str) -> None:
+    zset_order_store.pop(key, None)
+
+
+def _next_zset_order() -> int:
+    global zset_update_sequence
+    with zset_order_lock:
+        zset_update_sequence += 1
+        return zset_update_sequence
+
+
+def cleanup_expired_keys() -> int:
+    expired_keys = [key for key, expires_at in list(expiry_store.items()) if expires_at <= time.time()]
+    for key in expired_keys:
+        redis_store.pop(key, None)
+        expiry_store.pop(key, None)
+        _clear_auxiliary_key_state(key)
+    return len(expired_keys)
+
+
+def _background_cleanup_loop() -> None:
+    while True:
+        cleanup_expired_keys()
+        time.sleep(0.05)
+
+
 def purge_if_expired(key: str) -> None:
     expires_at = expiry_store.get(key)
     if expires_at is not None and expires_at <= time.time():
         redis_store.pop(key, None)
         expiry_store.pop(key, None)
+        _clear_auxiliary_key_state(key)
 
 
 def key_exists(key: str) -> bool:
@@ -285,6 +321,7 @@ def get_entry(key: str) -> dict[str, Any] | None:
 
 def set_string_entry(key: str, value: str) -> None:
     redis_store[key] = {"type": "string", "value": value}
+    _clear_auxiliary_key_state(key)
 
 
 def get_string_value(key: str) -> str | None:
@@ -373,9 +410,11 @@ def ensure_zset(key: str) -> dict[str, float]:
     entry = get_entry(key)
     if entry is None:
         redis_store[key] = {"type": "zset", "value": {}}
+        zset_order_store[key] = {}
         return redis_store[key]["value"]
     if entry["type"] != "zset":
         raise HTTPException(status_code=400, detail="wrong type operation against non-zset value")
+    zset_order_store.setdefault(key, {})
     return entry["value"]
 
 
@@ -411,24 +450,67 @@ def collect_sets(keys: list[str]) -> list[set[str]]:
     return collected
 
 
-def sorted_zset_items(values: dict[str, float], reverse: bool = False) -> list[tuple[str, float]]:
+def _zset_tie_order(key: str, member: str) -> int:
+    return zset_order_store.get(key, {}).get(member, 0)
+
+
+def sorted_zset_items(key: str, values: dict[str, float], reverse: bool = False) -> list[tuple[str, float]]:
     if reverse:
-        return sorted(values.items(), key=lambda item: (-item[1], item[0]))
-    return sorted(values.items(), key=lambda item: (item[1], item[0]))
+        return sorted(values.items(), key=lambda item: (-item[1], _zset_tie_order(key, item[0]), item[0]))
+    return sorted(values.items(), key=lambda item: (item[1], _zset_tie_order(key, item[0]), item[0]))
 
 
-def find_zset_rank(values: dict[str, float], member: str, reverse: bool = False) -> int | None:
-    ordered = sorted_zset_items(values, reverse=reverse)
+def find_zset_rank(key: str, values: dict[str, float], member: str, reverse: bool = False) -> int | None:
+    ordered = sorted_zset_items(key, values, reverse=reverse)
     for index, (current_member, _) in enumerate(ordered):
         if current_member == member:
             return index
     return None
 
 
-def slice_zset_members(values: dict[str, float], start: int, stop: int, reverse: bool = False) -> list[str]:
-    ordered = sorted_zset_items(values, reverse=reverse)
+def slice_zset_members(key: str, values: dict[str, float], start: int, stop: int, reverse: bool = False) -> list[str]:
+    ordered = sorted_zset_items(key, values, reverse=reverse)
     slice_start, slice_end = compute_lrange_slice(len(ordered), start, stop)
     return [member for member, _ in ordered[slice_start:slice_end]]
+
+
+def zset_members_around(
+    key: str,
+    values: dict[str, float],
+    member: str,
+    radius: int,
+    reverse: bool = False,
+) -> list[str]:
+    ordered = sorted_zset_items(key, values, reverse=reverse)
+    members = [current_member for current_member, _ in ordered]
+    try:
+        center = members.index(member)
+    except ValueError:
+        return []
+    start = max(0, center - radius)
+    stop = min(len(members), center + radius + 1)
+    return members[start:stop]
+
+
+def _resolve_zrange_bounds(
+    values: dict[str, float],
+    start: int,
+    stop: int,
+    page: int | None,
+    limit: int | None,
+) -> tuple[int, int]:
+    if page is None and limit is None:
+        return start, stop
+    if page is None or limit is None:
+        raise HTTPException(status_code=400, detail="page and limit must be used together")
+    if page < 1 or limit < 1:
+        raise HTTPException(status_code=400, detail="page and limit must be positive")
+    start = (page - 1) * limit
+    stop = start + limit - 1
+    return start, stop
+
+
+Thread(target=_background_cleanup_loop, daemon=True).start()
 
 
 @app.get("/")
@@ -459,6 +541,7 @@ def delete_value(key: str) -> DeleteResponse:
     existed = 1 if key in redis_store else 0
     redis_store.pop(key, None)
     expiry_store.pop(key, None)
+    _clear_auxiliary_key_state(key)
     return DeleteResponse(deleted=existed)
 
 
@@ -717,6 +800,7 @@ def zadd_value(key: str, member: str, payload: ZAddRequest) -> ZAddResponse:
     values = ensure_zset(key)
     added = 0 if member in values else 1
     values[member] = payload.score
+    zset_order_store.setdefault(key, {})[member] = _next_zset_order()
     return ZAddResponse(key=key, member=member, added=added, score=payload.score)
 
 
@@ -730,28 +814,53 @@ def zscore_value(key: str, member: str) -> ZScoreResponse:
 @app.get("/zsets/{key}/members/{member}/rank", response_model=ZRankResponse)
 def zrank_value(key: str, member: str) -> ZRankResponse:
     values = get_zset_value(key)
-    rank = None if values is None else find_zset_rank(values, member, reverse=False)
+    rank = None if values is None else find_zset_rank(key, values, member, reverse=False)
     return ZRankResponse(key=key, member=member, rank=rank)
 
 
 @app.get("/zsets/{key}/members/{member}/reverse-rank", response_model=ZRankResponse)
 def zrevrank_value(key: str, member: str) -> ZRankResponse:
     values = get_zset_value(key)
-    rank = None if values is None else find_zset_rank(values, member, reverse=True)
+    rank = None if values is None else find_zset_rank(key, values, member, reverse=True)
     return ZRankResponse(key=key, member=member, rank=rank)
 
 
 @app.get("/zsets/{key}/members", response_model=ZRangeResponse)
 def zrange_value(
     key: str,
-    start: int = Query(0),
-    stop: int = Query(-1),
-    order: Literal["asc", "desc"] = Query("asc"),
+    start: int = 0,
+    stop: int = -1,
+    order: Literal["asc", "desc"] = "asc",
+    page: int | None = None,
+    limit: int | None = None,
 ) -> ZRangeResponse:
     values = get_zset_value(key)
     if values is None:
         return ZRangeResponse(key=key, members=[])
-    return ZRangeResponse(key=key, members=slice_zset_members(values, start, stop, reverse=(order == "desc")))
+    start, stop = _resolve_zrange_bounds(values, start, stop, page, limit)
+    return ZRangeResponse(
+        key=key,
+        members=slice_zset_members(key, values, start, stop, reverse=(order == "desc")),
+    )
+
+
+@app.get("/zsets/{key}/members/{member}/around", response_model=ZAroundResponse)
+def zaround_value(
+    key: str,
+    member: str,
+    radius: int = 1,
+    order: Literal["asc", "desc"] = "desc",
+) -> ZAroundResponse:
+    if radius < 0:
+        raise HTTPException(status_code=400, detail="radius must be non-negative")
+    values = get_zset_value(key)
+    if values is None:
+        return ZAroundResponse(key=key, member=member, members=[])
+    return ZAroundResponse(
+        key=key,
+        member=member,
+        members=zset_members_around(key, values, member, radius, reverse=(order == "desc")),
+    )
 
 
 @app.post("/zsets/{key}/members/{member}/increment", response_model=ZIncrByResponse)
@@ -761,6 +870,7 @@ def zincrby_value(key: str, member: str, payload: ZIncrByRequest) -> ZIncrByResp
         current_score = values.get(member, 0.0)
         next_score = current_score + payload.increment
         values[member] = next_score
+        zset_order_store.setdefault(key, {})[member] = _next_zset_order()
         return ZIncrByResponse(key=key, member=member, score=next_score)
 
 
@@ -770,6 +880,7 @@ def zrem_value(key: str, member: str) -> ZRemResponse:
     if values is None or member not in values:
         return ZRemResponse(key=key, member=member, removed=0)
     del values[member]
+    zset_order_store.get(key, {}).pop(member, None)
     return ZRemResponse(key=key, member=member, removed=1)
 
 
