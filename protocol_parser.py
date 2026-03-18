@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BufferedReader
+from error_contract import ERR_EMPTY_COMMAND
 
 
 class ProtocolParseError(ValueError):
@@ -30,7 +31,7 @@ def parse_command_line(raw: str) -> list[str]:
 
     stripped = raw.strip()
     if not stripped:
-        raise ProtocolParseError("empty command")
+        raise ProtocolParseError(ERR_EMPTY_COMMAND)
 
     return _normalize_tokens(stripped.split())
 
