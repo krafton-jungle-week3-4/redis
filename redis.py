@@ -6,17 +6,20 @@ command_router로 위임하고 응답 딕셔너리를 반환합니다.
 동시성 설계 포인트:
 - 모든 쓰기 명령은 단일 writer thread가 queue에서 순차 처리합니다.
 - 읽기 명령도 동일한 store_lock 아래에서 수행해, 쓰기 중간 상태를 보지 않게 합니다.
+- 복구 중에는 request gate를 통해 새 요청 진입을 막고,
+  복구 작업 자체도 writer queue에서 처리해 기존 쓰기와 순서를 맞춥니다.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from queue import Queue
-from threading import Event, Thread
-from typing import Literal, TypedDict
+from threading import Event, RLock, Thread
+from typing import Any, Literal, TypedDict
 
 from command_router import dispatch_command, get_wrong_arity_command
-from core_state import store_lock
+from core_state import begin_loading, finish_loading, restore_state, store_lock, wait_until_ready
 from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
 from ttl_manager import ensure_background_cleanup_started, purge_expired_keys
 
@@ -30,14 +33,14 @@ class RedisResponse(TypedDict):
 
 @dataclass(slots=True)
 class WriteRequest:
-    """writer queue에 넣을 쓰기 요청 단위입니다."""
+    """writer queue에 넣을 작업 단위입니다."""
 
-    command: list[str]
+    command: list[str] | None = None
+    snapshot: dict[str, Any] | None = None
     done: Event = field(default_factory=Event)
     result: RedisResponse | None = None
 
 
-# 순차 처리가 필요한 쓰기 명령 목록입니다.
 WRITE_COMMANDS = {
     "DEL",
     "SET",
@@ -61,6 +64,7 @@ WRITE_COMMANDS = {
 }
 
 write_queue: Queue[WriteRequest] = Queue()
+request_gate = RLock()
 
 
 def _error(message: str) -> RedisResponse:
@@ -68,7 +72,6 @@ def _error(message: str) -> RedisResponse:
 
 
 def _execute_locked(command: list[str]) -> RedisResponse:
-    """store_lock을 잡은 상태에서 실제 명령을 실행합니다."""
     purge_expired_keys()
 
     command_name = command[0].upper()
@@ -79,20 +82,29 @@ def _execute_locked(command: list[str]) -> RedisResponse:
     return _error(err_unknown_command(command[0]))
 
 
+def _execute_restore_locked(snapshot: dict[str, Any]) -> RedisResponse:
+    restore_state(snapshot)
+    purge_expired_keys()
+    return {"type": "simple_string", "value": "OK"}
+
+
 def _writer_loop() -> None:
-    """queue에 들어온 쓰기 요청을 하나씩 순차 처리합니다."""
     while True:
         request = write_queue.get()
         try:
             with store_lock:
-                request.result = _execute_locked(request.command)
+                if request.snapshot is not None:
+                    request.result = _execute_restore_locked(request.snapshot)
+                elif request.command is not None:
+                    request.result = _execute_locked(request.command)
+                else:
+                    request.result = _error("ERR write request missing payload")
         finally:
             request.done.set()
             write_queue.task_done()
 
 
 def _submit_write(command: list[str]) -> RedisResponse:
-    """호출 스레드는 요청을 queue에 넣고, writer 처리 완료를 기다립니다."""
     request = WriteRequest(command=command)
     write_queue.put(request)
     request.done.wait()
@@ -101,24 +113,52 @@ def _submit_write(command: list[str]) -> RedisResponse:
     return request.result
 
 
-# 서버 전체에서 writer는 하나만 실행되도록 모듈 import 시 한 번 시작합니다.
+def _submit_restore(snapshot: dict[str, Any]) -> RedisResponse:
+    request = WriteRequest(snapshot=snapshot)
+    write_queue.put(request)
+    request.done.wait()
+    if request.result is None:
+        return _error("ERR restore request finished without result")
+    return request.result
+
+
 writer_thread = Thread(target=_writer_loop, name="mini-redis-single-writer", daemon=True)
 writer_thread.start()
+
+
+def restore_from_loader(loader: Callable[[], dict[str, Any]]) -> RedisResponse:
+    """복구 시작 시점부터 새 요청을 막고, loader 결과를 writer queue에서 복구합니다."""
+    ensure_background_cleanup_started(lambda: store_lock)
+
+    with request_gate:
+        begin_loading()
+        try:
+            snapshot = loader()
+            return _submit_restore(snapshot)
+        finally:
+            finish_loading()
+
+
+def restore_from_snapshot_data(snapshot: dict[str, Any]) -> RedisResponse:
+    return restore_from_loader(lambda: snapshot)
 
 
 def execute(command: list[str]) -> RedisResponse:
     ensure_background_cleanup_started(lambda: store_lock)
 
-    if not command:
-        return _error(ERR_EMPTY_COMMAND)
+    with request_gate:
+        wait_until_ready()
 
-    command_name = command[0].upper()
-    wrong_arity_command = get_wrong_arity_command(command_name, command)
-    if wrong_arity_command is not None:
-        return _error(err_wrong_number_of_arguments(wrong_arity_command))
+        if not command:
+            return _error(ERR_EMPTY_COMMAND)
 
-    if command_name in WRITE_COMMANDS:
-        return _submit_write(command)
+        command_name = command[0].upper()
+        wrong_arity_command = get_wrong_arity_command(command_name, command)
+        if wrong_arity_command is not None:
+            return _error(err_wrong_number_of_arguments(wrong_arity_command))
 
-    with store_lock:
-        return _execute_locked(command)
+        if command_name in WRITE_COMMANDS:
+            return _submit_write(command)
+
+        with store_lock:
+            return _execute_locked(command)
