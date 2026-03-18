@@ -8,8 +8,9 @@ The main goal is to prevent conflicts between:
 - the server/protocol owner
 - the `redis.py` core owner
 
-한국어 메모:
-이 문서는 기능 설명서라기보다 "서로 어디까지 책임지고, 무엇을 먼저 합의해야 하는지"를 고정하는 협업 기준 문서다.
+Korean note:
+이 문서는 기능 명세서라기보다, 팀원이 함께 작업할 때 기준이 흔들리지 않도록 잡아두는 협업 문서입니다.
+누가 무엇을 맡는지, 어디까지 먼저 합의해야 하는지, 어떤 규칙을 고정해야 하는지를 미리 정리해 둡니다.
 
 ---
 
@@ -44,8 +45,9 @@ Expected return examples:
 {"type": "error", "value": "unknown command"}
 ```
 
-한국어 메모:
-지금 단계에서는 "문자열만 저장하는 아주 작은 Redis"만 맞추는 것이 목표다.
+Korean note:
+지금 단계의 목표는 아주 작더라도 정확하게 맞는 Redis 최소 구현을 만드는 것입니다.
+즉, 문자열만 저장할 수 있는 가장 단순한 사이클을 안정적으로 맞추는 것이 우선입니다.
 
 ---
 
@@ -63,8 +65,9 @@ The following are explicitly excluded at this stage:
 - transaction
 - pub/sub
 
-한국어 메모:
-범위 밖 기능을 끌어오면 담당자 간 합의 포인트가 너무 많아져서 오히려 개발이 꼬일 수 있다.
+Korean note:
+지금은 기능을 넓히는 것보다, 작게 시작하더라도 기준을 정확히 맞추는 편이 훨씬 중요합니다.
+범위를 넓히면 합의할 내용이 급격히 늘어나고, 그만큼 협업 충돌도 쉽게 생깁니다.
 
 ---
 
@@ -83,8 +86,9 @@ Non-responsibilities:
 - in-memory storage logic
 - Redis core behavior definitions
 
-한국어 메모:
-1번 담당은 "입력/출력 변환" 담당이지, Redis 명령의 실제 의미를 구현하는 담당은 아니다.
+Korean note:
+1번 담당은 입력을 받아서 파싱하고, 코어가 준 결과를 다시 프로토콜 응답으로 바꾸는 역할입니다.
+즉, "입력과 출력의 연결"을 맡는 사람이지, Redis 명령의 실제 동작을 정의하는 사람은 아닙니다.
 
 ### 2. `redis.py` Core Owner
 
@@ -100,8 +104,9 @@ Non-responsibilities:
 - protocol wire formatting
 - network-level response generation
 
-한국어 메모:
-2번 담당은 "명령 실행 엔진" 담당이고, 프로토콜 문자열 포맷은 몰라도 된다.
+Korean note:
+2번 담당은 저장소와 명령 실행 로직을 맡습니다.
+소켓 통신이나 응답 문자열 포맷 같은 네트워크 세부사항은 몰라도 되게 만드는 것이 이상적입니다.
 
 ---
 
@@ -118,8 +123,10 @@ This means:
 - the core layer returns `dict`
 - protocol-specific details must not leak into `redis.py`
 
-한국어 메모:
-이 경계가 흔들리면 서버 코드와 코어 코드가 서로 침범하게 되고, 협업 충돌이 거의 반드시 난다.
+Korean note:
+이 경계가 프로젝트에서 가장 중요합니다.
+서버는 파싱된 `list[str]`를 넘기고, 코어는 약속된 `dict`를 돌려주는 것까지만 책임지면 됩니다.
+이 선이 흐려지기 시작하면 서버와 코어가 서로의 역할을 침범하게 되고, 유지보수가 급격히 어려워집니다.
 
 ---
 
@@ -139,8 +146,10 @@ Must be fixed:
 Why this matters:
 - if one side expects parsed tokens and the other expects raw text, integration breaks immediately
 
-한국어 메모:
-이건 제일 먼저 맞춰야 한다. 입력 형식 이해가 다르면 나머지는 다 맞아도 연동이 안 된다.
+Korean note:
+이건 가장 먼저 맞춰야 하는 부분입니다.
+입력 형식에 대한 이해가 다르면, 나머지 구현이 다 맞아도 처음부터 연동이 되지 않습니다.
+그래서 "무엇이 들어오고, 어떤 모양으로 들어오는지"를 먼저 고정해야 합니다.
 
 ### 2. Return Contract
 
@@ -157,6 +166,10 @@ Recommended rule:
 Why this matters:
 - otherwise the server layer cannot serialize responses consistently
 
+Korean note:
+서버 입장에서는 항상 같은 모양의 응답을 받는 것이 가장 안전합니다.
+응답 형식이 상황마다 달라지면 직렬화 로직이 복잡해지고, 디버깅도 훨씬 어려워집니다.
+
 ### 3. Per-Command Behavior
 
 Must be fixed:
@@ -169,6 +182,11 @@ Must be fixed:
 Why this matters:
 - two developers may implement different behavior for the same command and both think they are correct
 
+Korean note:
+이 부분은 실제 협업에서 가장 자주 엇갈리는 영역입니다.
+예를 들어 없는 key를 `GET`했을 때 무엇을 돌려줄지, `TYPE`은 `none`인지 `null`인지 같은 규칙이 다르면,
+각자 자기 기준으로는 맞는 코드를 짜도 최종 결과는 서로 맞지 않게 됩니다.
+
 ### 4. Error Rules
 
 Must be fixed:
@@ -180,8 +198,10 @@ Must be fixed:
 Why this matters:
 - integration may appear to work, but debugging and future tests become unstable
 
-한국어 메모:
-에러 메시지는 사소해 보여도 협업 때 제일 많이 충돌나는 부분 중 하나다.
+Korean note:
+에러 메시지는 사소해 보여도 팀 작업에서는 꽤 중요합니다.
+나중에 테스트를 붙이거나 로그를 볼 때 문자열 한두 글자 차이 때문에 계속 충돌이 날 수 있기 때문입니다.
+그래서 에러 형식과 문구는 초반에 가볍게 넘기지 않는 편이 좋습니다.
 
 ### 5. Key / Value Rules
 
@@ -198,6 +218,10 @@ Recommended discussion:
 Why this matters:
 - parser assumptions and core assumptions may diverge on edge cases
 
+Korean note:
+특히 빈 문자열과 숫자처럼 보이는 문자열은 초반에 기준을 정해두는 것이 좋습니다.
+예를 들어 `"123"`을 그냥 문자열로 볼지, 숫자처럼 특별 취급할지 흔들리기 시작하면 구현 전체가 애매해집니다.
+
 ### 6. Storage Rules
 
 Must be fixed:
@@ -207,6 +231,10 @@ Must be fixed:
 
 Why this matters:
 - otherwise key existence and returned value may become inconsistent
+
+Korean note:
+모든 명령이 같은 저장소를 바라본다는 점을 명확히 해두어야 결과가 서로 어긋나지 않습니다.
+한쪽은 존재한다고 보고 다른 쪽은 없다고 보는 상황이 생기면 바로 디버깅이 어려워집니다.
 
 ### 7. Responsibility Split
 
@@ -218,6 +246,10 @@ Must be fixed:
 Why this matters:
 - once logic is duplicated across layers, every small change becomes risky
 
+Korean note:
+서버와 코어의 역할이 섞이기 시작하면 작은 수정도 두 군데를 동시에 바꿔야 하는 문제가 생깁니다.
+처음에는 빨라 보여도, 나중에는 오히려 가장 큰 혼란의 원인이 됩니다.
+
 ### 8. Protocol Mapping
 
 Must be fixed:
@@ -227,6 +259,10 @@ Must be fixed:
 
 Why this matters:
 - the core may be correct internally while the client still receives the wrong response
+
+Korean note:
+내부 로직이 맞더라도, 네트워크 응답 형식으로 바꾸는 과정이 틀리면 사용자 입장에서는 그냥 "안 되는 것"처럼 보입니다.
+그래서 이 부분도 코어와 서버가 따로 생각하지 말고 함께 맞춰두는 것이 중요합니다.
 
 ---
 
@@ -427,8 +463,9 @@ Recommended example:
 Empty command:
 - should also be handled as an error response
 
-한국어 메모:
-최소 구현에서는 "에러도 응답의 한 종류"라고 생각하는 편이 구현과 연동이 단순하다.
+Korean note:
+최소 구현에서는 에러도 하나의 "정상적인 응답 종류"라고 생각하는 편이 훨씬 단순합니다.
+예외를 여기저기 던지는 것보다, 약속된 형식으로 돌려주는 편이 서버와의 연결도 깔끔해집니다.
 
 ---
 
@@ -473,8 +510,9 @@ At this stage:
 - `DEL key1 key2` is not supported
 - `EXISTS key1 key2` is not supported
 
-한국어 메모:
-원래 Redis와 다를 수 있어도 괜찮다. 지금은 "최소 구현 기준으로 서로 정확히 맞추는 것"이 더 중요하다.
+Korean note:
+원래 Redis와 완전히 같지 않아도 괜찮습니다.
+지금은 "최소 구현 기준으로 서로 정확히 맞추는 것"이 더 중요하고, 멀티키까지 열어두면 논의할 내용이 불필요하게 늘어납니다.
 
 ---
 
@@ -494,6 +532,10 @@ Before implementation starts, both owners should explicitly confirm:
 - exact server/core responsibility boundary
 - exact `restTCP` mapping rule for each response type
 
+Korean note:
+이 체크리스트는 "나중에 물어보자"가 아니라, 개발 전에 짧게라도 먼저 맞춰두기 위한 용도입니다.
+초반에 5분 투자하면 뒤에서 몇 시간을 아낄 수 있습니다.
+
 ---
 
 ## Scope Discipline
@@ -510,8 +552,9 @@ Do not pull in:
 - transaction
 - pub/sub
 
-한국어 메모:
-지금 목표는 "작아도 정확하게 맞는 구현"이다. 기능을 늘리는 것보다 기준을 고정하는 것이 더 중요하다.
+Korean note:
+지금 목표는 "작아도 정확하게 맞는 구현"입니다.
+기능을 더 넣는 것보다, 지금 하기로 한 것들을 서로 같은 기준으로 완성하는 것이 훨씬 더 중요합니다.
 
 ---
 
