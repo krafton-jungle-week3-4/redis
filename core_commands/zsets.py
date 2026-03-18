@@ -3,6 +3,7 @@
 from typing import Any
 
 from error_contract import ERR_VALUE_NOT_FLOAT, ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_ZSET
+from snapshot_manager import prepare_mutable_write
 
 
 FIXED_ARITY: dict[str, int] = {
@@ -76,6 +77,8 @@ def execute_zset_command(
         if score is None:
             return {"type": "error", "value": ERR_VALUE_NOT_FLOAT}
         member = command[3]
+        if key in zset_store:
+            prepare_mutable_write("zset", key)
         scores = zset_store.setdefault(key, {})
         added = 0 if member in scores else 1
         scores[member] = score
@@ -139,6 +142,8 @@ def execute_zset_command(
         if increment is None:
             return {"type": "error", "value": ERR_VALUE_NOT_FLOAT}
         member = command[3]
+        if key in zset_store:
+            prepare_mutable_write("zset", key)
         scores = zset_store.setdefault(key, {})
         current = scores.get(member, 0.0)
         next_score = current + increment
@@ -151,6 +156,10 @@ def execute_zset_command(
             return {"type": "integer", "value": 0}
         member = command[2]
         if member not in scores:
+            return {"type": "integer", "value": 0}
+        prepare_mutable_write("zset", key)
+        scores = zset_store.get(key)
+        if scores is None or member not in scores:
             return {"type": "integer", "value": 0}
         del scores[member]
         if not scores:

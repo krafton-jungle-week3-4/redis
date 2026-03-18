@@ -3,6 +3,7 @@
 from typing import Any
 
 from error_contract import ERR_VALUE_NOT_INTEGER, ERR_WRONG_TYPE_LIST
+from snapshot_manager import prepare_mutable_write
 
 
 FIXED_ARITY: dict[str, int] = {
@@ -47,6 +48,11 @@ def _ensure_list_entry(
     if key in string_store or key in set_store or key in zset_store:
         return ERR_WRONG_TYPE_LIST
 
+    items = list_store.get(key)
+    if items is None:
+        list_store[key] = []
+        return list_store[key]
+    prepare_mutable_write("list", key)
     items = list_store.get(key)
     if items is None:
         list_store[key] = []
@@ -107,6 +113,10 @@ def execute_list_command(
             return {"type": "error", "value": items}
         if items is None or not items:
             return {"type": "null", "value": None}
+        prepare_mutable_write("list", key)
+        items = resolved_list_store.get(key)
+        if items is None or not items:
+            return {"type": "null", "value": None}
         value = items.pop(0)
         if not items:
             resolved_list_store.pop(key, None)
@@ -117,6 +127,10 @@ def execute_list_command(
         items = _get_list_entry(key, string_store, resolved_set_store, resolved_list_store, resolved_zset_store)
         if isinstance(items, str):
             return {"type": "error", "value": items}
+        if items is None or not items:
+            return {"type": "null", "value": None}
+        prepare_mutable_write("list", key)
+        items = resolved_list_store.get(key)
         if items is None or not items:
             return {"type": "null", "value": None}
         value = items.pop()

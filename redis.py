@@ -21,6 +21,7 @@ from typing import Any, Literal, TypedDict
 from command_router import dispatch_command, get_wrong_arity_command
 from core_state import begin_loading, finish_loading, restore_state, store_lock, wait_until_ready
 from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
+from snapshot_manager import begin_snapshot, finish_snapshot, write_snapshot_file
 from ttl_manager import ensure_background_cleanup_started, purge_expired_keys
 
 ResponseType = Literal["simple_string", "bulk_string", "null", "integer", "error", "array"]
@@ -156,6 +157,20 @@ def execute(command: list[str]) -> RedisResponse:
         wrong_arity_command = get_wrong_arity_command(command_name, command)
         if wrong_arity_command is not None:
             return _error(err_wrong_number_of_arguments(wrong_arity_command))
+
+        # Snapshot/Dump는 파일 I/O가 있으므로 store 복사 구간만 lock으로 보호하고,
+        # 실제 파일 쓰기는 lock 밖에서 처리합니다.
+        if command_name in {"SNAPSHOT", "DUMP"}:
+            with store_lock:
+                purge_expired_keys()
+                context = begin_snapshot(command[1] if len(command) == 2 else None)
+
+            try:
+                path = write_snapshot_file(context)
+                return {"type": "bulk_string", "value": path}
+            finally:
+                with store_lock:
+                    finish_snapshot()
 
         if command_name in WRITE_COMMANDS:
             return _submit_write(command)

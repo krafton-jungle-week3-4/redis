@@ -124,3 +124,28 @@ curl -X POST http://127.0.0.1:8000/lists/numbers/items/right \
 ```bash
 curl -X PUT http://127.0.0.1:8000/sets/tags/members/python
 ```
+
+## Automation
+
+The repository now includes a GitHub Actions workflow at `.github/workflows/test-and-update-notion.yml`.
+
+What it does:
+
+- runs when `main` receives a push
+- executes all tests under `tests/`
+- saves the raw output as `testresult.txt`
+- uploads the raw output as a workflow artifact
+- appends the latest result summary to the Notion page `327bd214-dd7e-80aa-a930-c2ff985f64a3`
+
+Required GitHub secrets:
+
+- `NOTION_TOKEN`: internal integration token for the target workspace
+- `NOTION_PAGE_ID`: optional override for the target page id
+
+Notion setup:
+
+1. Create an internal Notion integration.
+2. Share the target page with that integration using `... > Add connections`.
+3. Store the integration token in the `NOTION_TOKEN` repository secret.
+
+The Notion update step uses `scripts/update_notion_test_results.py` and prepends the latest run summary to the top of the page.
