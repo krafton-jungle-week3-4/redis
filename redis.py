@@ -1,7 +1,12 @@
-﻿"""Minimal redis core entrypoint: execute(command: list[str]) -> dict."""
+﻿"""mini-redis 코어 진입점.
+
+RESP 파싱이 끝난 명령 배열을 받아서,
+알맞은 자료형 모듈로 위임하고 응답 딕셔너리를 반환합니다.
+"""
 
 from typing import Literal, TypedDict
 
+from core_commands.lists import FIXED_ARITY as LIST_FIXED_ARITY, execute_list_command
 from core_commands.sets import (
     FIXED_ARITY as SET_FIXED_ARITY,
     execute_set_command,
@@ -24,6 +29,7 @@ class RedisResponse(TypedDict):
 
 string_store: dict[str, str] = {}
 set_store: dict[str, set[str]] = {}
+list_store: dict[str, list[str]] = {}
 
 
 def _error(message: str) -> RedisResponse:
@@ -37,14 +43,16 @@ def _wrong_arity(command_name: str) -> RedisResponse:
 def _handle_common_key_commands(command_name: str, command: list[str]) -> RedisResponse | None:
     if command_name == "DEL":
         key = command[1]
-        deleted = 1 if key in string_store or key in set_store else 0
+        deleted = 1 if key in string_store or key in set_store or key in list_store else 0
         string_store.pop(key, None)
         set_store.pop(key, None)
+        list_store.pop(key, None)
         return {"type": "integer", "value": deleted}
 
     if command_name == "EXISTS":
         key = command[1]
-        return {"type": "integer", "value": 1 if key in string_store or key in set_store else 0}
+        exists = key in string_store or key in set_store or key in list_store
+        return {"type": "integer", "value": 1 if exists else 0}
 
     if command_name == "TYPE":
         key = command[1]
@@ -52,12 +60,15 @@ def _handle_common_key_commands(command_name: str, command: list[str]) -> RedisR
             return {"type": "bulk_string", "value": "string"}
         if key in set_store:
             return {"type": "bulk_string", "value": "set"}
+        if key in list_store:
+            return {"type": "bulk_string", "value": "list"}
         return {"type": "bulk_string", "value": "none"}
 
     return None
 
 
 def execute(command: list[str]) -> RedisResponse:
+    # 빈 명령은 유효한 Redis 명령이 아니므로 바로 에러를 반환합니다.
     if not command:
         return _error(ERR_EMPTY_COMMAND)
 
@@ -67,15 +78,17 @@ def execute(command: list[str]) -> RedisResponse:
     if command_name in common_fixed_arity and len(command) != common_fixed_arity[command_name]:
         return _wrong_arity(command_name)
 
+    # 자료형별 고정 길이 명령은 인자 개수가 정확히 맞아야 합니다.
     if command_name in STRING_FIXED_ARITY and len(command) != STRING_FIXED_ARITY[command_name]:
         return _wrong_arity(command_name)
-
     if command_name in SET_FIXED_ARITY and len(command) != SET_FIXED_ARITY[command_name]:
         return _wrong_arity(command_name)
-
-    if has_wrong_string_variable_arity(command_name, command):
+    if command_name in LIST_FIXED_ARITY and len(command) != LIST_FIXED_ARITY[command_name]:
         return _wrong_arity(command_name)
 
+    # MSET/MGET, SINTER/SUNION처럼 가변 길이 명령은 별도 규칙으로 검사합니다.
+    if has_wrong_string_variable_arity(command_name, command):
+        return _wrong_arity(command_name)
     if has_wrong_set_variable_arity(command_name, command):
         return _wrong_arity(command_name)
 
@@ -90,5 +103,9 @@ def execute(command: list[str]) -> RedisResponse:
     set_result = execute_set_command(command_name, command, string_store, set_store)
     if set_result is not None:
         return set_result
+
+    list_result = execute_list_command(command_name, command, string_store, set_store, list_store)
+    if list_result is not None:
+        return list_result
 
     return _error(err_unknown_command(command[0]))
