@@ -9,6 +9,7 @@ ERR_WRONG_TYPE_SET = "ERR wrong type operation against non-set value"
 ERR_WRONG_TYPE_LIST = "ERR wrong type operation against non-list value"
 ERR_WRONG_TYPE_HASH = "ERR wrong type operation against non-hash value"
 ERR_WRONG_TYPE_ZSET = "ERR wrong type operation against non-zset value"
+ERR_LEADERBOARD_CLOSED = "ERR leaderboard is closed for season settlement"
 ERR_INTERNAL_SERVER = "ERR internal server error"
 
 

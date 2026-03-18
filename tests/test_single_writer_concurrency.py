@@ -2,7 +2,8 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from redis import execute, hash_store, list_store, set_store, string_store, zset_store
+from core_state import expiry_store, hash_store, list_store, set_store, string_store, zset_store
+from redis import execute
 
 
 class SingleWriterConcurrencyTests(unittest.TestCase):
@@ -12,6 +13,7 @@ class SingleWriterConcurrencyTests(unittest.TestCase):
         list_store.clear()
         hash_store.clear()
         zset_store.clear()
+        expiry_store.clear()
 
     def test_incr_is_serialized_across_many_threads(self) -> None:
         request_count = 2000
