@@ -143,6 +143,20 @@ def append_blocks(page_id: str, token: str, children: list[dict], dry_run: bool)
             response.read()
     except HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 404:
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = {}
+            if payload.get("code") == "object_not_found":
+                message = payload.get("message", "The requested page or block was not found.")
+                raise RuntimeError(
+                    "Notion target page was not found or is not shared with the integration. "
+                    f"page_id={page_id}. "
+                    "Check NOTION_PAGE_ID and share the page with the integration in "
+                    "Notion via Share/Add connections. "
+                    f"Notion said: {message}"
+                ) from exc
         raise RuntimeError(f"Notion API error {exc.code}: {body}") from exc
     except URLError as exc:
         raise RuntimeError(f"Failed to reach Notion API: {exc}") from exc

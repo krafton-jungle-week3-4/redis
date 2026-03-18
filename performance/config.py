@@ -47,6 +47,7 @@ class BenchmarkConfig:
     latency_iterations: int
     load_total_requests: int
     concurrency_levels: tuple[int, ...]
+    profiles: tuple[str, ...]
     random_seed: int
     output_dir: Path
 
@@ -64,6 +65,22 @@ def _parse_concurrency_levels(raw_value: str) -> tuple[int, ...]:
     if not levels:
         raise ValueError("PERF_CONCURRENCY_LEVELS must not be empty")
     return tuple(levels)
+
+
+def _parse_profiles(raw_value: str) -> tuple[str, ...]:
+    allowed = {"core", "network"}
+    profiles: list[str] = []
+    for chunk in raw_value.split(","):
+        profile = chunk.strip().lower()
+        if not profile:
+            continue
+        if profile not in allowed:
+            raise ValueError("PERF_PROFILES must contain only 'core' and/or 'network'")
+        if profile not in profiles:
+            profiles.append(profile)
+    if not profiles:
+        raise ValueError("PERF_PROFILES must not be empty")
+    return tuple(profiles)
 
 
 def _parse_bool(raw_value: str | None, *, env_name: str, default: bool | None = None) -> bool | None:
@@ -199,6 +216,7 @@ def load_config() -> tuple[RespConfig, MongoConfig, BenchmarkConfig]:
         concurrency_levels=_parse_concurrency_levels(
             os.getenv("PERF_CONCURRENCY_LEVELS", "1,4,8,16")
         ),
+        profiles=_parse_profiles(os.getenv("PERF_PROFILES", "core,network")),
         random_seed=int(os.getenv("PERF_RANDOM_SEED", "1729")),
         output_dir=output_dir,
     )

@@ -60,6 +60,59 @@ class LoadSummary:
     p99_latency_ms: float
 
 
+class CoreExecuteBenchmarkClient:
+    def __init__(self) -> None:
+        from redis import execute
+
+        self._execute = execute
+
+    def __enter__(self) -> "CoreExecuteBenchmarkClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def ping(self) -> str:
+        response = self._execute(["PING"])
+        if response != {"type": "simple_string", "value": "PONG"}:
+            raise RuntimeError(f"unexpected core PING response: {response!r}")
+        return "PONG"
+
+    def set_value(self, key: str, value: str) -> None:
+        response = self._execute(["SET", key, value])
+        if response != {"type": "simple_string", "value": "OK"}:
+            raise RuntimeError(f"unexpected core SET response: {response!r}")
+
+    def get_value(self, key: str) -> str | None:
+        response = self._execute(["GET", key])
+        if response["type"] == "null":
+            return None
+        if response["type"] != "bulk_string":
+            raise RuntimeError(f"unexpected core GET response: {response!r}")
+        return str(response["value"])
+
+    def delete_value(self, key: str) -> int:
+        response = self._execute(["DEL", key])
+        if response["type"] != "integer":
+            raise RuntimeError(f"unexpected core DEL response: {response!r}")
+        return int(response["value"])
+
+    def exists(self, key: str) -> bool:
+        response = self._execute(["EXISTS", key])
+        if response["type"] != "integer":
+            raise RuntimeError(f"unexpected core EXISTS response: {response!r}")
+        return int(response["value"]) == 1
+
+    def type_of(self, key: str) -> str:
+        response = self._execute(["TYPE", key])
+        if response["type"] != "bulk_string":
+            raise RuntimeError(f"unexpected core TYPE response: {response!r}")
+        return str(response["value"])
+
+    def close(self) -> None:
+        return None
+
+
 def _percentile(samples: list[float], percent: float) -> float:
     if not samples:
         return 0.0
@@ -90,6 +143,28 @@ def _summarize_latency(samples: list[float]) -> LatencySummary:
     )
 
 
+def _summarize_latency_us(samples: list[float]) -> dict[str, float | int]:
+    if not samples:
+        return {
+            "count": 0,
+            "avg_us": 0.0,
+            "p50_us": 0.0,
+            "p95_us": 0.0,
+            "p99_us": 0.0,
+            "min_us": 0.0,
+            "max_us": 0.0,
+        }
+    return {
+        "count": len(samples),
+        "avg_us": round(statistics.fmean(samples), 6),
+        "p50_us": round(_percentile(samples, 50), 6),
+        "p95_us": round(_percentile(samples, 95), 6),
+        "p99_us": round(_percentile(samples, 99), 6),
+        "min_us": round(min(samples), 6),
+        "max_us": round(max(samples), 6),
+    }
+
+
 def _distribute_work(total_requests: int, workers: int) -> list[int]:
     base_count, remainder = divmod(total_requests, workers)
     assignments = [base_count] * workers
@@ -113,6 +188,18 @@ def _cleanup_keys(client_factory: ClientFactory, keys: list[str]) -> None:
                     continue
     except Exception:
         return
+
+
+def _clear_core_state() -> None:
+    from core_state import expiry_store, hash_store, list_store, set_store, store_lock, string_store, zset_store
+
+    with store_lock:
+        string_store.clear()
+        set_store.clear()
+        list_store.clear()
+        hash_store.clear()
+        zset_store.clear()
+        expiry_store.clear()
 
 
 def _require_key(operation: OperationSpec) -> str:
@@ -317,6 +404,52 @@ def run_latency_benchmark(
 
     return {
         operation_name: asdict(_summarize_latency(samples[operation_name]))
+        for operation_name in OPERATION_NAMES
+    }
+
+
+def run_core_execute_benchmark(
+    iterations: int,
+    random_seed: int = 1729,
+) -> dict[str, dict[str, float | int]]:
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
+
+    value = "benchmark-value"
+    key_prefix = f"perf:core_execute:latency:{uuid.uuid4().hex}"
+    samples = {name: [] for name in OPERATION_NAMES}
+    operations, preseed_pairs, cleanup_keys = _build_latency_workload(
+        key_prefix,
+        iterations,
+        value,
+        random_seed,
+    )
+
+    _clear_core_state()
+    try:
+        with CoreExecuteBenchmarkClient() as client:
+            warmup_key = f"{key_prefix}:warmup"
+            client.ping()
+            client.set_value(warmup_key, value)
+            client.get_value(warmup_key)
+            client.exists(warmup_key)
+            client.type_of(warmup_key)
+            client.delete_value(warmup_key)
+
+            for key, seed_value in preseed_pairs:
+                client.set_value(key, seed_value)
+
+            for operation in operations:
+                start = time.perf_counter()
+                result = _execute_operation(client, operation)
+                samples[operation.name].append((time.perf_counter() - start) * 1_000_000)
+                _validate_operation_result("core_execute", operation, result)
+    finally:
+        _cleanup_keys(CoreExecuteBenchmarkClient, cleanup_keys)
+        _clear_core_state()
+
+    return {
+        operation_name: _summarize_latency_us(samples[operation_name])
         for operation_name in OPERATION_NAMES
     }
 

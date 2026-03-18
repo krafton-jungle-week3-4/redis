@@ -1,4 +1,4 @@
-﻿"""Command validation and dispatch pipeline for redis core."""
+"""Command validation and dispatch pipeline for redis core."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from core_commands.strings import (
 )
 from core_commands.zsets import FIXED_ARITY as ZSET_FIXED_ARITY, execute_zset_command
 from core_state import hash_store, list_store, set_store, string_store, zset_store
+from invalidation_manager import invalidate_key, invalidate_many
 from season_manager import FIXED_ARITY as SEASON_FIXED_ARITY, execute_season_command
 from ttl_manager import clear_ttl_on_write, handle_ttl_command
 
@@ -28,6 +29,17 @@ COMMON_FIXED_ARITY: dict[str, int] = {
     "TTL": 2,
     "PERSIST": 2,
 }
+
+STATELESS_COMMANDS = {"PING", "ECHO"}
+KEYED_COMMANDS = (
+    set(COMMON_FIXED_ARITY)
+    | set(STRING_FIXED_ARITY)
+    | set(SET_FIXED_ARITY)
+    | set(LIST_FIXED_ARITY)
+    | set(HASH_FIXED_ARITY)
+    | set(ZSET_FIXED_ARITY)
+    | {"MSET", "MGET", "SINTER", "SUNION"}
+) - STATELESS_COMMANDS
 
 
 def get_wrong_arity_command(command_name: str, command: list[str]) -> str | None:
@@ -55,6 +67,8 @@ def get_wrong_arity_command(command_name: str, command: list[str]) -> str | None
 
 
 def dispatch_command(command_name: str, command: list[str]) -> dict | None:
+    _invalidate_on_write(command_name, command)
+
     common_result = execute_common_key_command(command_name, command)
     if common_result is not None:
         return common_result
@@ -126,3 +140,33 @@ def dispatch_command(command_name: str, command: list[str]) -> dict | None:
         return zset_result
 
     return None
+
+
+def _invalidate_on_write(command_name: str, command: list[str]) -> None:
+    single_key_write_commands = {
+        "DEL",
+        "SET",
+        "INCR",
+        "DECR",
+        "LPUSH",
+        "RPUSH",
+        "LPOP",
+        "RPOP",
+        "SADD",
+        "SREM",
+        "HSET",
+        "HDEL",
+        "HINCRBY",
+        "ZADD",
+        "ZINCRBY",
+        "ZREM",
+        "EXPIRE",
+        "PERSIST",
+    }
+
+    if command_name in single_key_write_commands and len(command) > 1:
+        invalidate_key(command[1])
+        return
+
+    if command_name == "MSET":
+        invalidate_many(command[1::2])

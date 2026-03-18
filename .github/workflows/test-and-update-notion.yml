@@ -48,7 +48,9 @@ jobs:
           path: testresult.txt
 
       - name: Update Notion page
+        id: update_notion
         if: always() && env.NOTION_TOKEN != ''
+        continue-on-error: true
         env:
           TEST_EXIT_CODE: ${{ steps.run_tests.outputs.exit_code }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -58,6 +60,16 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python scripts/update_notion_test_results.py testresult.txt
+
+      - name: Record Notion update failure
+        if: always() && steps.update_notion.outcome == 'failure'
+        run: |
+          {
+            echo "## Notion update failed"
+            echo
+            echo "The test run completed, but writing to Notion failed."
+            echo "Check that the target page is shared with the integration and that NOTION_PAGE_ID is correct."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail workflow when tests fail
         if: steps.run_tests.outputs.exit_code != '0'
