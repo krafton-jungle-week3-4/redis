@@ -19,7 +19,7 @@ from queue import Queue
 from threading import Event, RLock, Thread
 from typing import Any, Literal, TypedDict
 
-from command_router import dispatch_command, get_wrong_arity_command
+from command_router import STATELESS_COMMANDS, dispatch_command, get_wrong_arity_command
 from core_state import begin_loading, finish_loading, restore_state, store_lock, wait_until_ready
 from error_contract import ERR_EMPTY_COMMAND, err_unknown_command, err_wrong_number_of_arguments
 from snapshot_manager import begin_snapshot, finish_snapshot, write_snapshot_file
